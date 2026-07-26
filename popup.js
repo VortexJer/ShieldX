@@ -30,6 +30,9 @@ const guardStatus  = el('guardStatus');
 const dlToggle     = el('dlToggle');
 const dlStatus     = el('dlStatus');
 const redirectCount = el('redirectCount');
+const pickBtn          = el('pickBtn');
+const customRestoreBtn = el('customRestoreBtn');
+const customCount      = el('customCount');
 
 let currentTabId = null;
 let currentHost  = '';
@@ -157,6 +160,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   }
 
   refresh();
+  refreshCustom();
 });
 
 // ── Interruptores ────────────────────────────────────────────────────────────
@@ -186,6 +190,39 @@ siteToggle.addEventListener('change', () => {
       if (currentTabId !== null) chrome.tabs.reload(currentTabId);
     }
   );
+});
+
+// ── Ocultar elemento (picker) ────────────────────────────────────────────────
+function refreshCustom() {
+  if (!currentHost) { pickBtn.disabled = true; return; }
+  chrome.storage.local.get(['customHidden'], (d) => {
+    const list = (d.customHidden && d.customHidden[currentHost]) || [];
+    if (list.length) {
+      customCount.textContent = list.length + (list.length === 1
+        ? ' elemento oculto en este sitio' : ' elementos ocultos en este sitio');
+      customRestoreBtn.style.display = '';
+    } else {
+      customCount.textContent = 'Señala en la página lo que quieras quitar';
+      customRestoreBtn.style.display = 'none';
+    }
+  });
+}
+
+pickBtn.addEventListener('click', () => {
+  if (currentTabId === null) return;
+  chrome.tabs.sendMessage(currentTabId, { type: 'PICK_START' }, () => {
+    void chrome.runtime.lastError;
+    window.close();   // el popup estorba mientras se señala
+  });
+});
+
+customRestoreBtn.addEventListener('click', () => {
+  chrome.storage.local.get(['customHidden'], (d) => {
+    const map = d.customHidden && typeof d.customHidden === 'object' ? d.customHidden : {};
+    delete map[currentHost];
+    // storage.onChanged en el content script retira la hoja y lo restaura en vivo
+    chrome.storage.local.set({ customHidden: map }, refreshCustom);
+  });
 });
 
 guardToggle.addEventListener('change', () => {

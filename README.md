@@ -9,6 +9,8 @@ para Chrome (Manifest V3).
 |---|---|---|
 | Red | `rules/ads.json` | 310 reglas `declarativeNetRequest` contra dominios de anuncios y telemetría |
 | Red | `rules/redirect.json` | 55 reglas contra redes de pop-under y redirección (PopAds, PropellerAds, ExoClick, Adsterra…), incluida la navegación principal |
+| Red | `rules/cleanurl.json` | Limpia los parámetros de rastreo de las URLs al navegar (`utm_*`, `gclid`, `fbclid`, `msclkid`, `igshid`…) |
+| Picker | `content.js` + menú contextual | «Ocultar elemento»: señala cualquier cosa de una página y ShieldX la oculta y la recuerda para ese sitio; restaurable desde el popup |
 | DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, oculta banners de cookies (sin pulsar nada en nombre del usuario) y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
 | YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |

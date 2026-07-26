@@ -14,11 +14,15 @@ function comprobar(desc, ok) {
 function arrancar(hostname, estado) {
   const atributos = {};
   let cssInyectado = false;
+  const cssIds = new Set();
 
   const el = () => ({
     setAttribute() {}, removeAttribute() {}, getAttribute: () => null,
     hasAttribute: () => false, remove() {}, click() {},
-    appendChild(hijo) { if (hijo && hijo.id === 'shieldx-css') cssInyectado = true; },
+    appendChild(hijo) {
+      if (hijo && hijo.id) cssIds.add(hijo.id);
+      if (hijo && hijo.id === 'shieldx-css') cssInyectado = true;
+    },
     querySelector: () => null, querySelectorAll: () => [],
     closest: () => null, children: [], style: { setProperty() {}, removeProperty() {} },
     textContent: '', innerText: '', tagName: 'DIV', id: '',
@@ -72,7 +76,7 @@ function arrancar(hostname, estado) {
 
   new Function(src)();
   storageCb(estado);
-  return { cssInyectado, atributos, selectoresInvalidos };
+  return { cssInyectado, atributos, selectoresInvalidos, cssIds };
 }
 
 const ACTIVO = { enabled: true, ytAdBlock: true, guardEnabled: true, siteExcluded: [] };
@@ -109,6 +113,15 @@ try {
   // 6. El toggle de YouTube se propaga.
   r = arrancar('www.youtube.com', Object.assign({}, ACTIVO, { ytAdBlock: false }));
   comprobar('toggle de YouTube en OFF se propaga', r.atributos['data-shieldx-yt'] === '0');
+
+  // 7. Selectores personales del picker: hoja propia en el host que los tiene,
+  //    en ningun otro, y tampoco si el sitio esta excluido.
+  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto', '#banner-raro'] } }));
+  comprobar('selectores del picker aplicados en su host', r.cssIds.has('shieldx-custom-css'));
+  r = arrancar('www.elpais.com', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto'] } }));
+  comprobar('los selectores de otro host no se aplican', !r.cssIds.has('shieldx-custom-css'));
+  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { siteExcluded: ['eldiario.es'], customHidden: { 'eldiario.es': ['.molesto'] } }));
+  comprobar('sitio excluido: tampoco selectores del picker', !r.cssIds.has('shieldx-custom-css'));
 } catch (e) {
   console.log('FALLO:', e.message);
   console.log(e.stack.split('\n').slice(0, 4).join('\n'));

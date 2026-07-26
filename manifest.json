@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ShieldX – Bloqueador Total",
-  "version": "11.3.2",
+  "version": "11.4.0",
   "description": "Bloquea anuncios, rastreadores, resultados patrocinados y banners de cookies. Sin excepciones.",
   "content_security_policy": {
     "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
@@ -12,7 +12,8 @@
     "storage",
     "tabs",
     "downloads",
-    "notifications"
+    "notifications",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -73,6 +74,11 @@
         "id": "ruleset_redirect",
         "enabled": true,
         "path": "rules/redirect.json"
+      },
+      {
+        "id": "ruleset_cleanurl",
+        "enabled": true,
+        "path": "rules/cleanurl.json"
       }
     ]
   },

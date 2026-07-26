@@ -47,6 +47,20 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(syncSiteRules);
 
+// ── Menú contextual: señalar y ocultar desde el clic derecho ─────────────────
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create({
+    id: 'sx-pick',
+    title: 'Ocultar elemento con ShieldX',
+    contexts: ['page', 'image', 'link', 'selection', 'video']
+  }, () => void chrome.runtime.lastError);
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== 'sx-pick' || !tab || tab.id === undefined) return;
+  chrome.tabs.sendMessage(tab.id, { type: 'PICK_START' }, () => void chrome.runtime.lastError);
+});
+
 // ── Reglas de red para los sitios excluidos ──────────────────────────────────
 // allowAllRequests sobre el main_frame exime al documento y a todos sus
 // subrecursos de las reglas estáticas de bloqueo.

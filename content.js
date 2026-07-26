@@ -66,7 +66,7 @@ function propagateGuardState(on) {
   } catch (_) {}
 }
 
-const STATE_KEYS = ['enabled', 'ytAdBlock', 'guardEnabled', 'siteExcluded'];
+const STATE_KEYS = ['enabled', 'ytAdBlock', 'guardEnabled', 'siteExcluded', 'customHidden'];
 
 function applyState(data) {
   globalEnabled = data.enabled !== false;
@@ -79,6 +79,11 @@ function applyState(data) {
   // El anti-redirección no depende de la capa de ocultado: sigue activo en el
   // correo, donde además hace falta (enlaces de phishing que abren ventanas).
   propagateGuardState(data.guardEnabled !== false && isActive());
+
+  // Selectores elegidos a mano por el usuario con el picker. Se aplican
+  // incluso en clientes de correo: ocultar algo que TÚ señalaste es distinto
+  // de que un patrón genérico te esconda un correo.
+  applyCustomCSS(data.customHidden);
 
   if (isActive() && !IS_MAIL_APP) start(); else stop();
 }
@@ -773,3 +778,138 @@ function reportCookie() {
     chrome.runtime.sendMessage({ type: 'COOKIE_BLOCKED' }, () => void chrome.runtime.lastError);
   } catch (_) {}
 }
+
+// ── Selectores personales (picker) ───────────────────────────────────────────
+// Lo que el usuario señaló con "Ocultar elemento". Viven en storage por host y
+// se aplican por hoja de estilo, así que retirar la hoja lo restaura todo.
+const CUSTOM_CSS_ID = 'shieldx-custom-css';
+
+function applyCustomCSS(customHidden) {
+  const old = document.getElementById(CUSTOM_CSS_ID);
+  if (old) old.remove();
+  if (!globalEnabled || siteExcluded) return;
+  const map = customHidden && typeof customHidden === 'object' ? customHidden : {};
+  const sels = Array.isArray(map[HOST]) ? map[HOST].filter(s => typeof s === 'string') : [];
+  if (!sels.length) return;
+  const valid = sels.filter(s => {
+    try { document.createDocumentFragment().querySelector(s); return true; }
+    catch (_) { return false; }
+  });
+  if (!valid.length) return;
+  const style = document.createElement('style');
+  style.id = CUSTOM_CSS_ID;
+  style.textContent = valid.join(',') + '{display:none!important}';
+  (document.head || document.documentElement).appendChild(style);
+}
+
+// ── Picker: señalar y ocultar ────────────────────────────────────────────────
+function cssEscapeSafe(s) {
+  try { return CSS.escape(s); }
+  catch (_) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&'); }
+}
+
+// Un selector estable para el elemento: id único > tag+clases estables únicas >
+// ruta con nth-of-type. Las clases con pinta autogenerada (hashes, css-in-js)
+// se descartan: cambian en cada build y el selector moriría mañana.
+function selectorFor(el) {
+  if (el.id && document.querySelectorAll('#' + cssEscapeSafe(el.id)).length === 1) {
+    return '#' + cssEscapeSafe(el.id);
+  }
+  const stable = [...el.classList]
+    .filter(c => c.length < 30 && !/\d{3,}|^js-|^css-|^sc-|^_/.test(c))
+    .slice(0, 3);
+  if (stable.length) {
+    const s = el.tagName.toLowerCase() + stable.map(c => '.' + cssEscapeSafe(c)).join('');
+    try { if (document.querySelectorAll(s).length === 1) return s; } catch (_) {}
+  }
+  // Ruta anclada con :nth-child en CADA nivel hasta un id único o el body:
+  // única por construcción. Una ruta laxa (nth-of-type solo a veces, 5 niveles)
+  // llegó a empatar con 91 artículos de una portada — habría ocultado todos.
+  const parts = [];
+  let n = el;
+  while (n && n !== document.documentElement && parts.length < 20) {
+    if (n.id && document.querySelectorAll('#' + cssEscapeSafe(n.id)).length === 1) {
+      parts.unshift('#' + cssEscapeSafe(n.id));
+      return parts.join(' > ');
+    }
+    const par = n.parentElement;
+    if (!par) break;
+    const idx = [...par.children].indexOf(n) + 1;
+    parts.unshift(n.tagName.toLowerCase() + ':nth-child(' + idx + ')');
+    if (par === document.body) { parts.unshift('body'); break; }
+    n = par;
+  }
+  return parts.join(' > ');
+}
+
+let picking = false;
+
+function startPick() {
+  if (picking || window !== window.top) return;
+  picking = true;
+
+  const box = document.createElement('div');
+  box.style.cssText =
+    'position:fixed;z-index:2147483647;pointer-events:none;' +
+    'outline:2px solid #00FF88;background:rgba(0,255,136,.14);' +
+    'transition:all .06s linear;left:0;top:0;width:0;height:0';
+  const tip = document.createElement('div');
+  tip.textContent = 'SHIELDX — CLIC: OCULTAR · ESC: SALIR';
+  tip.style.cssText =
+    'position:fixed;z-index:2147483647;pointer-events:none;left:50%;top:12px;' +
+    'transform:translateX(-50%);background:#080B0F;color:#00FF88;' +
+    'border:1px solid rgba(0,255,136,.35);border-radius:4px;padding:5px 12px;' +
+    'font:600 11px/1.4 Consolas,monospace;letter-spacing:.08em';
+  document.documentElement.append(box, tip);
+
+  let target = null;
+
+  function onMove(e) {
+    const el = e.target;
+    if (!el || el === box || el === tip || el === document.body ||
+        el === document.documentElement) { target = null; return; }
+    target = el;
+    const r = el.getBoundingClientRect();
+    box.style.left = r.left + 'px';
+    box.style.top = r.top + 'px';
+    box.style.width = r.width + 'px';
+    box.style.height = r.height + 'px';
+  }
+
+  function stopPick() {
+    picking = false;
+    box.remove(); tip.remove();
+    for (const [t, f] of pares) window.removeEventListener(t, f, true);
+  }
+
+  function onClick(e) {
+    e.preventDefault(); e.stopPropagation();
+    const chosen = target;
+    stopPick();
+    if (!chosen) return;
+    const sel = selectorFor(chosen);
+    chrome.storage.local.get(['customHidden'], (data) => {
+      const map = data.customHidden && typeof data.customHidden === 'object' ? data.customHidden : {};
+      const list = Array.isArray(map[HOST]) ? map[HOST] : [];
+      if (!list.includes(sel)) list.push(sel);
+      map[HOST] = list;
+      // storage.onChanged reconstruye la hoja de estilo y lo oculta.
+      chrome.storage.local.set({ customHidden: map });
+    });
+  }
+
+  function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); stopPick(); } }
+  function swallow(e) { e.preventDefault(); e.stopPropagation(); }
+
+  const pares = [
+    ['mousemove', onMove], ['click', onClick], ['keydown', onKey],
+    ['mousedown', swallow], ['mouseup', swallow], ['contextmenu', swallow],
+  ];
+  for (const [t, f] of pares) window.addEventListener(t, f, true);
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!sender || sender.id !== chrome.runtime.id) return;
+  if (typeof msg !== 'object' || msg === null) return;
+  if (msg.type === 'PICK_START') startPick();
+});
