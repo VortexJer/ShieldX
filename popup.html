@@ -187,6 +187,12 @@
     .yt-status.on  { color:var(--green); }
     .yt-status.off { color:var(--red); }
 
+    /* dominio actual: puede ser largo, no debe empujar el toggle */
+    #siteHost {
+      font-family:var(--mono); max-width:170px;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+
     /* ── Footer ── */
     .footer {
       padding:9px 20px; border-top:1px solid var(--bdr);
@@ -216,7 +222,7 @@
       <div class="logo-name">Shield<span>X</span></div>
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-      <div class="vtag">v11.0</div>
+      <div class="vtag">v11.1</div>
       <div class="sec-badge"><span class="sec-dot"></span>HARDENED</div>
     </div>
   </div>
@@ -237,6 +243,24 @@
         <div class="tgl-track"><div class="tgl-thumb"></div></div>
       </label>
       <div class="tgl-hint">ON/OFF</div>
+    </div>
+  </div>
+
+  <!-- Este sitio -->
+  <div class="yt-section" id="siteSection">
+    <div class="yt-l">
+      <span class="yt-ico">🌐</span>
+      <div class="yt-info">
+        <span class="yt-name">Este sitio</span>
+        <span class="yt-desc" id="siteHost">—</span>
+      </div>
+    </div>
+    <div class="yt-r">
+      <span class="yt-status on" id="siteStatus">ACTIVO</span>
+      <label class="tgl">
+        <input type="checkbox" id="siteToggle" checked>
+        <div class="tgl-track"><div class="tgl-thumb"></div></div>
+      </label>
     </div>
   </div>
 
