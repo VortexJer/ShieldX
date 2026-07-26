@@ -8,17 +8,755 @@
     "transform": {
      "queryTransform": {
       "removeParams": [
-       "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-       "utm_id", "gclid", "gbraid", "wbraid", "dclid", "fbclid", "msclkid",
-       "yclid", "twclid", "ttclid", "igshid", "mc_eid", "srsltid", "s_kwcid"
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
       ]
      }
     }
    }
   },
   "condition": {
-   "resourceTypes": ["main_frame"],
-   "regexFilter": "[?&](utm_(source|medium|campaign|term|content|id)|gclid|gbraid|wbraid|dclid|fbclid|msclkid|yclid|twclid|ttclid|igshid|mc_eid|srsltid|s_kwcid)="
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_source="
+  }
+ },
+ {
+  "id": 502,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_medium="
+  }
+ },
+ {
+  "id": 503,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_campaign="
+  }
+ },
+ {
+  "id": 504,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_term="
+  }
+ },
+ {
+  "id": 505,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_content="
+  }
+ },
+ {
+  "id": 506,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "utm_id="
+  }
+ },
+ {
+  "id": 507,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "gclid="
+  }
+ },
+ {
+  "id": 508,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "gbraid="
+  }
+ },
+ {
+  "id": 509,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "wbraid="
+  }
+ },
+ {
+  "id": 510,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "dclid="
+  }
+ },
+ {
+  "id": 511,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "fbclid="
+  }
+ },
+ {
+  "id": 512,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "msclkid="
+  }
+ },
+ {
+  "id": 513,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "yclid="
+  }
+ },
+ {
+  "id": 514,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "twclid="
+  }
+ },
+ {
+  "id": 515,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "ttclid="
+  }
+ },
+ {
+  "id": 516,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "igshid="
+  }
+ },
+ {
+  "id": 517,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "mc_eid="
+  }
+ },
+ {
+  "id": 518,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "srsltid="
+  }
+ },
+ {
+  "id": 519,
+  "priority": 1,
+  "action": {
+   "type": "redirect",
+   "redirect": {
+    "transform": {
+     "queryTransform": {
+      "removeParams": [
+       "utm_source",
+       "utm_medium",
+       "utm_campaign",
+       "utm_term",
+       "utm_content",
+       "utm_id",
+       "gclid",
+       "gbraid",
+       "wbraid",
+       "dclid",
+       "fbclid",
+       "msclkid",
+       "yclid",
+       "twclid",
+       "ttclid",
+       "igshid",
+       "mc_eid",
+       "srsltid",
+       "s_kwcid"
+      ]
+     }
+    }
+   }
+  },
+  "condition": {
+   "resourceTypes": [
+    "main_frame"
+   ],
+   "urlFilter": "s_kwcid="
   }
  }
 ]
