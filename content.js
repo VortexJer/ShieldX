@@ -641,15 +641,21 @@ window.addEventListener('load', () => {
 // Sin 'manage preferences' ni 'save preferences': esos botones abren el panel
 // de configuración en lugar de rechazar, y dejaban el banner abierto.
 const COOKIE_REJECT = Object.freeze([
-  'rechazar todo', 'rechazar todas', 'rechazar', 'deny all', 'deny',
-  'reject all', 'reject', 'decline all', 'decline',
-  'refuser tout', 'refuser', 'alle ablehnen', 'ablehnen',
-  'rifiuta tutto', 'rifiuta', 'rejeitar tudo', 'rejeitar',
-  'no acepto', 'no, gracias', 'no thanks', 'disagree',
-  'only necessary', 'only essential', 'solo esenciales', 'solo necesarias',
+  'rechazar todo', 'rechazar todas', 'rechazar', 'no aceptar',
+  'deny all', 'deny', 'reject all', 'reject', 'decline all', 'decline',
+  'refuse all', 'refuser tout', 'refuser', 'alle ablehnen', 'ablehnen',
+  'rifiuta tutto', 'rifiuta', 'non accetto', 'rejeitar tudo', 'rejeitar',
+  'recusar', 'no acepto', 'no, gracias', 'no thanks', 'disagree',
+  'only necessary', 'only essential', 'necessary only', 'essential only',
+  'strictly necessary', 'solo esenciales', 'solo necesarias',
+  'nur notwendige', 'nur erforderliche',
   'use necessary cookies only', 'continue without accepting',
-  'continuar sin aceptar',
+  'continuar sin aceptar', 'continuer sans accepter',
 ]);
+
+// Muros "paga o acepta" (Marca: «rechazo y me suscribo»): ahí el botón de
+// rechazar lleva a una pasarela de pago. Jamás se clica; el banner se oculta.
+const COOKIE_TRAP = /suscri|subscri|premium|pagar|payant|abonn|register|reg[ií]strate/;
 
 const COOKIE_SELECTORS = Object.freeze([
   '#onetrust-banner-sdk', '#cookiebanner', '#cookie-banner', '#cookie-notice',
@@ -669,8 +675,25 @@ const COOKIE_SELECTORS = Object.freeze([
 ]);
 
 const COOKIE_QUERY = COOKIE_SELECTORS.join(',');
+
+// Detección genérica: verificado en vivo que los selectores fijos no bastan
+// (Marca usa .popup-cookies__container, ninguno casaba). Cualquier elemento
+// flotante con cookie/consent en id o clase y texto de consentimiento cuenta.
+const COOKIE_HINT_QUERY =
+  '[id*="ookie"],[class*="ookie"],[id*="onsent"],[class*="onsent"],' +
+  '[id*="gdpr"],[class*="gdpr"],[id*="cmpbox"],[class*="cmp-container"]';
+
+const COOKIE_TEXT = /cookie|consent|gdpr|rgpd|privacidad|privacy/;
+
+// Iframes de CMP (Sourcepoint, Quantcast, TrustArc…): este script corre
+// también dentro (all_frames) y ahí el documento entero ES el banner.
+const CMP_IFRAME = window !== window.top &&
+  (/privacy-mgmt|sp-prod\.net|consensu\.org|trustarc|truste\.com|consentmanager/.test(location.hostname) ||
+   /sp_message|consent/.test(location.pathname));
+
 const MAX_COOKIE_CLICKS = 3;   // techo por documento: sin él, un banner que no
 let cookieClicks = 0;          // se cierra provocaba clics en bucle
+const GIVE_UP_SCANS = 8;       // tras ~8 pasadas sin botón seguro, se oculta
 
 // offsetParent es null en position:fixed, que es justo como se posicionan los
 // banners de cookies: hay que medir de otra forma.
@@ -683,47 +706,150 @@ function normalizeText(t) {
   return (t || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Busca también dentro del shadow root del contenedor (Usercentrics y otros
+// CMP renderizan ahí y querySelectorAll normal no los ve).
+function cookieButtonRoots(container) {
+  const roots = [container];
+  if (container.shadowRoot) roots.push(container.shadowRoot);
+  return roots;
+}
+
 function findBtn(container, list) {
-  const nodes = container.querySelectorAll(
-    'button,a[role="button"],[role="button"],input[type="button"],input[type="submit"],.btn,.button'
-  );
-  for (const el of nodes) {
-    const t = normalizeText(el.innerText || el.textContent || el.value || '');
-    if (!t || t.length > 60) continue;   // párrafos legales, no botones
-    if (list.some(p => t === p || t.includes(p))) return el;
+  for (const root of cookieButtonRoots(container)) {
+    let nodes;
+    try {
+      nodes = root.querySelectorAll(
+        'button,a,[role="button"],input[type="button"],input[type="submit"],.btn,.button'
+      );
+    } catch (_) { continue; }
+    for (const el of nodes) {
+      const t = normalizeText(el.innerText || el.textContent || el.value ||
+                              el.getAttribute('aria-label') || '');
+      if (!t || t.length > 60) continue;    // párrafos legales, no botones
+      if (COOKIE_TRAP.test(t)) continue;    // "rechazo y me suscribo" y familia
+      if (list.some(p => t === p || t.includes(p))) return el;
+    }
   }
   return null;
 }
 
-function skipCookies() {
-  if (!isActive() || cookieClicks >= MAX_COOKIE_CLICKS) return;
+// El envoltorio más alto que también sea "de cookies": ahí suele estar el
+// backdrop que oscurece la página entera.
+const COOKIE_WRAP_RE = /ookie|onsent|gdpr|cmpbox/i;
 
-  const seen = [];
-  try { seen.push(...document.querySelectorAll(COOKIE_QUERY)); } catch (_) {}
+function cookieTopContainer(node) {
+  let top = node;
+  let p = node.parentElement;
+  while (p && p !== document.body && p !== document.documentElement) {
+    const cls = typeof p.className === 'string' ? p.className : (p.getAttribute('class') || '');
+    if (COOKIE_WRAP_RE.test(cls) || COOKIE_WRAP_RE.test(p.id || '')) top = p;
+    p = p.parentElement;
+  }
+  return top;
+}
 
-  for (const node of seen) {
-    if (node.hasAttribute('data-sx-cookie')) continue;   // procesado ya
-    if (!isVisible(node)) continue;
-    node.setAttribute('data-sx-cookie', '1');
+// Cerrar sin botón: ocultar el banner y devolver el scroll que suelen dejar
+// bloqueado. Solo se toca overflow, y solo cuando hemos actuado sobre un CMP.
+function unlockScroll() {
+  for (const el of [document.documentElement, document.body]) {
+    if (!el) continue;
+    try {
+      if (getComputedStyle(el).overflow === 'hidden') {
+        el.style.setProperty('overflow', 'visible', 'important');
+      }
+    } catch (_) {}
+  }
+}
 
-    const btn = findBtn(node, COOKIE_REJECT);
-    if (btn) { btn.click(); reportCookie(); return; }
+// Procesa un contenedor de banner. Política: OCULTAR PRIMERO (el usuario no
+// tiene que ver el banner ni un segundo), y el clic en "rechazar" queda como
+// tarea de fondo sobre el banner ya invisible — click() funciona igual en
+// elementos con display:none, y responder al CMP evita que el banner vuelva
+// en la siguiente visita. Marcar como resuelto solo al clicar o agotar los
+// reintentos: los CMP cargan async y sus botones llegan tarde.
+function handleCookieContainer(node) {
+  const scans = parseInt(node.getAttribute('data-sx-cookie'), 10) || 0;
+  if (scans < 0) return false;               // resuelto o descartado
+  node.setAttribute('data-sx-cookie', String(scans + 1));
 
-    const close = node.querySelector(
-      '[aria-label="close"],[aria-label="Close"],[aria-label="cerrar"],.btn-close,.close'
-    );
-    if (close) { close.click(); reportCookie(); return; }
+  // Ocultar ya, en la primera pasada en que se identifica. Y no solo el nodo:
+  // muchos banners tienen un envoltorio-backdrop a página completa con clase
+  // de cookies (Marca: .popup-disagreed-cookies, z-index 99999, 1009px) que no
+  // pasa los filtros por sí mismo — se sube al ancestro cookie-ish más alto.
+  if (scans === 0) {
+    hide(cookieTopContainer(node));
+    hide(node);
+    unlockScroll();
+    report(1);
   }
 
-  for (const d of document.querySelectorAll('[role="dialog"],[role="alertdialog"]')) {
-    if (d.hasAttribute('data-sx-cookie')) continue;
-    if (!isVisible(d)) continue;
-    const t = normalizeText(d.textContent || '');
-    if (!t.includes('cookie') && !t.includes('gdpr') &&
-        !t.includes('consent') && !t.includes('privacidad')) continue;
-    d.setAttribute('data-sx-cookie', '1');
-    const btn = findBtn(d, COOKIE_REJECT);
-    if (btn) { btn.click(); reportCookie(); return; }
+  const btn = findBtn(node, COOKIE_REJECT);
+  if (btn && cookieClicks < MAX_COOKIE_CLICKS) {
+    node.setAttribute('data-sx-cookie', '-1');
+    btn.click();
+    reportCookie();
+    return true;
+  }
+
+  const close = node.querySelector(
+    '[aria-label="close"],[aria-label="Close"],[aria-label="cerrar"],.btn-close,.close'
+  );
+  if (close && cookieClicks < MAX_COOKIE_CLICKS) {
+    node.setAttribute('data-sx-cookie', '-1');
+    close.click();
+    reportCookie();
+    return true;
+  }
+
+  // Sin botón seguro (muro "paga o acepta", CMP raro): ya está oculto, se deja
+  // de reintentar y punto.
+  if (scans + 1 >= GIVE_UP_SCANS) node.setAttribute('data-sx-cookie', '-1');
+  return false;
+}
+
+function skipCookies() {
+  if (!isActive()) return;
+
+  // Dentro de un iframe de CMP el banner es el documento entero.
+  if (CMP_IFRAME) {
+    if (document.body && cookieClicks < MAX_COOKIE_CLICKS) {
+      const btn = findBtn(document.body, COOKIE_REJECT);
+      if (btn) { btn.click(); reportCookie(); }
+    }
+    return;
+  }
+
+  // 1) Contenedores conocidos
+  const seen = new Set();
+  try {
+    for (const n of document.querySelectorAll(COOKIE_QUERY)) {
+      if (isVisible(n)) seen.add(n);
+    }
+  } catch (_) {}
+
+  // 2) Genéricos: flotantes con pinta de banner de consentimiento
+  try {
+    for (const el of document.querySelectorAll(COOKIE_HINT_QUERY)) {
+      if (seen.has(el) || !isVisible(el)) continue;
+      const s = getComputedStyle(el);
+      if (s.position !== 'fixed' && s.position !== 'sticky' && s.position !== 'absolute') continue;
+      const t = normalizeText(el.textContent);
+      if (!COOKIE_TEXT.test(t) || t.length > 4000) continue;
+      seen.add(el);
+    }
+  } catch (_) {}
+
+  // 3) Diálogos con texto de consentimiento
+  try {
+    for (const d of document.querySelectorAll('[role="dialog"],[role="alertdialog"]')) {
+      if (seen.has(d) || !isVisible(d)) continue;
+      if (!COOKIE_TEXT.test(normalizeText(d.textContent || ''))) continue;
+      seen.add(d);
+    }
+  } catch (_) {}
+
+  for (const node of seen) {
+    if (handleCookieContainer(node)) return;   // una acción por pasada
   }
 }
 
