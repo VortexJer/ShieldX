@@ -9,7 +9,7 @@ para Chrome (Manifest V3).
 |---|---|---|
 | Red | `rules/ads.json` | 310 reglas `declarativeNetRequest` contra dominios de anuncios y telemetría |
 | Red | `rules/redirect.json` | 55 reglas contra redes de pop-under y redirección (PopAds, PropellerAds, ExoClick, Adsterra…), incluida la navegación principal |
-| DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, rechaza banners de cookies y elimina las capas transparentes que roban el primer clic |
+| DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, oculta banners de cookies (sin pulsar nada en nombre del usuario) y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
 | YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |
 | Descargas | `background.js` | Pausa y pregunta cuando un fichero empieza a descargarse sin que lo hayas pedido |
