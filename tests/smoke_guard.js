@@ -50,6 +50,9 @@ global.window = {
   open(url) { aperturasReales++; return { real: true, url }; },
 };
 
+const locationAssignOriginal  = global.Location.prototype.assign;
+const locationReplaceOriginal = global.Location.prototype.replace;
+
 new Function('window', fs.readFileSync(path, 'utf8')).call(global.window, global.window);
 
 // ── Utilidades del test ─────────────────────────────────────────────────────
@@ -83,18 +86,14 @@ gesto(fondo);
 r = global.window.open('https://porno-scam.example');
 comprobar('clic sobre el fondo no autoriza ventanas', aperturasReales === 1 && !r.real);
 
-// 5. Navegación con Location.assign.
-const loc = new global.Location();
-navegacionesReales = [];
-loc.assign('/otra-pagina');
-comprobar('navegación dentro del sitio, permitida', navegacionesReales.length === 1);
-
-loc.assign('https://scam.example/premio');
-comprobar('salto a otro dominio sin gesto, bloqueado', navegacionesReales.length === 1);
-
-gesto(boton);
-loc.assign('https://otro-sitio.example/');
-comprobar('salto a otro dominio tras un clic, permitido', navegacionesReales.length === 2);
+// 5. Location NO se parchea: en Chrome real location.assign/replace son
+//    propiedades propias no configurables y el parche al prototipo no
+//    intercepta nada. Si alguien lo reintroduce, este test lo delata para que
+//    no vuelva la falsa sensacion de proteccion.
+comprobar('Location.prototype.assign queda intacto (via inparcheable)',
+  global.Location.prototype.assign === locationAssignOriginal);
+comprobar('Location.prototype.replace queda intacto (via inparcheable)',
+  global.Location.prototype.replace === locationReplaceOriginal);
 
 // 6. Anchor sintético creado al vuelo, el otro clásico del pop-under.
 const a = new global.HTMLAnchorElement();

@@ -531,6 +531,36 @@ function killOverlays() {
   return n;
 }
 
+// ── Meta refresh hacia otro dominio ──────────────────────────────────────────
+// El <meta http-equiv="refresh"> que te lleva solo a otra web es un vector
+// clásico de redirección forzada, y location es inparcheable desde script.
+// Dentro del mismo sitio se respeta (hay webs legítimas que lo usan para
+// recargarse); hacia otro dominio se retira antes de que dispare.
+function baseDomain(h) {
+  return String(h || '').toLowerCase().replace(/^www\./, '').split('.').slice(-2).join('.');
+}
+
+function stripMetaRefresh() {
+  if (!isActive()) return;
+  let nodes;
+  try { nodes = document.querySelectorAll('meta[http-equiv="refresh" i]:not([data-sx])'); }
+  catch (_) { return; }
+  for (const m of nodes) {
+    m.setAttribute('data-sx', '0');
+    const c = m.getAttribute('content') || '';
+    const match = c.match(/url\s*=\s*['"]?([^'";]+)/i);
+    if (!match) continue;   // refresh sin URL: recarga de la propia página
+    try {
+      const dest = new URL(match[1].trim(), location.href);
+      if (dest.protocol !== 'http:' && dest.protocol !== 'https:') continue;
+      if (baseDomain(dest.hostname) === baseDomain(location.hostname)) continue;
+      m.setAttribute('data-sx', '1');
+      m.remove();
+      report(1);
+    } catch (_) {}
+  }
+}
+
 // ── CSS inyectado (sólo selectores inequívocos) ──────────────────────────────
 const CSS_ID = 'shieldx-css';
 
@@ -564,6 +594,7 @@ function runPasses() {
   scheduled = false;
   lastRun = performance.now();
   sweep();
+  stripMetaRefresh();
   skipCookies();
   if (domReady) killOverlays();
 }

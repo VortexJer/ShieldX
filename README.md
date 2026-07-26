@@ -11,7 +11,7 @@ para Chrome (Manifest V3).
 | Red | `rules/redirect.json` | 55 reglas contra redes de pop-under y redirección (PopAds, PropellerAds, ExoClick, Adsterra…), incluida la navegación principal |
 | DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, rechaza banners de cookies y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
-| YouTube | `youtube.js` | Oculta los renderers de anuncio, pulsa «Saltar» y acelera los no salteables |
+| YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |
 | Descargas | `background.js` | Pausa y pregunta cuando un fichero empieza a descargarse sin que lo hayas pedido |
 | UI | `popup.html` · `popup.js` | Interruptores, exclusión por sitio y contadores |
 
@@ -31,12 +31,37 @@ arbitrario: puede traer cualquier nombre de clase o cualquier imagen con
 anti-redirección, las descargas vigiladas y la capa de red siguen funcionando
 ahí con normalidad.
 
+### YouTube
+
+Tres capas, medidas contra el YouTube real:
+
+1. **Poda de datos**: las claves de anuncio (`adPlacements`, `adSlots`,
+   `playerAds`) se borran del JSON del reproductor antes de que lo consuma —
+   tanto en `ytInitialPlayerResponse` (primer vídeo) como en las respuestas
+   `fetch` de la navegación SPA, que hoy van por `/youtubei/v1/get_watch`, no
+   por `/player`. La poda es profunda (las claves se buscan en todo el árbol,
+   ~1,4 ms) y **jamás bloquea la petición**: ante cualquier error se entrega la
+   respuesta original. `/player/ad_break` se deja pasar a propósito.
+2. **Salto activo**: si aun así entra un anuncio (p. ej. cosido en el stream),
+   se pulsa «Saltar» en cuanto existe y mientras tanto se silencia y acelera.
+   La detección de anuncio usa **solo** la clase del `#movie_player`
+   (`ad-showing`): detectar por los nodos `.ytp-ad-*` se queda pegado, porque
+   persisten ocultos al terminar el anuncio.
+3. **Cosmética**: los renderers de anuncio del feed y la búsqueda se eliminan
+   del DOM y se cubren por CSS.
+
 ### Anti-redirección
 
 La regla es que un clic sólo autoriza una ventana o un salto de dominio si cayó
 sobre un enlace o botón de verdad y hace menos de un segundo. Un clic sobre el
 fondo de la página o sobre el reproductor no autoriza nada: ese clic es
 precisamente el que secuestran las webs de descarga y streaming.
+
+Matiz honesto: `location.assign/replace/href` son inparcheables desde script
+([Unforgeable], verificado en Chrome real), así que la redirección lanzada por
+el script de primer nivel de la página no se puede interceptar ahí. Esa vía se
+cubre bloqueando en red los dominios de las redes de redirección (incluido
+`main_frame`) y retirando los `<meta http-equiv="refresh">` hacia otro dominio.
 
 ## Instalación
 

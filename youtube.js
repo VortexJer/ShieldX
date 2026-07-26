@@ -1,24 +1,32 @@
-// ShieldX – YouTube Ad Skipper v12
-// Cambios respecto a v11:
-//  - El estado llega por el atributo data-shieldx-yt de <html>. La v11 lo leía
-//    de window.__shieldxYT, que content.js escribía con un <script> inline: la
-//    CSP de YouTube lo bloquea, así que el interruptor no se aplicaba nunca.
-//  - Apagar el bloqueo retira también el CSS (antes se quedaba puesto).
-//  - Se limpian adPlacements/playerAds de ytInitialPlayerResponse antes de que
-//    el reproductor los lea: evita el pre-roll en origen, sin tocar la red
-//    (interceptar fetch/XHR fue lo que dejó el player cargando en v10).
-//  - removeAdNodes usa querySelectorAll en vez de recorrer el árbol nodo a nodo,
-//    y las mutaciones se agrupan: en el feed de YouTube el TreeWalker por cada
-//    nodo añadido costaba más que el propio render.
-//  - Al terminar el anuncio se restaura la velocidad que tenía el usuario, no 1.
+// ShieldX – YouTube Ad Skipper v13
+// Cambios respecto a v12, verificados contra el YouTube real (2026-07):
+//  - Poda de anuncios en las respuestas del reproductor. La limpieza de
+//    ytInitialPlayerResponse solo cubre el PRIMER video; al navegar dentro de
+//    YouTube (SPA) los datos llegan por fetch. Medido en vivo: el endpoint
+//    actual es /youtubei/v1/get_watch (con el playerResponse incrustado), no
+//    /player, asi que la poda es PROFUNDA: borra las claves de anuncio esten
+//    donde esten del arbol (1.4 ms sobre una respuesta real de 82 KB).
+//    NUNCA se bloquea la peticion (eso fue lo que rompio el player en v10):
+//    ante cualquier duda o error se devuelve la respuesta original. Tampoco se
+//    toca /player/ad_break: su esquema es otro y bloquearlo es detectable.
+//  - Deteccion de anuncio SOLO por la clase del #movie_player (ad-showing /
+//    ad-interrupting). La deteccion por presencia de .ytp-ad-preview-container
+//    y compania se quedaba pegada (los nodos persisten ocultos al acabar el
+//    anuncio) y el 16x se aplicaba al video de verdad: cazado en vivo con un
+//    video entero reproducido a 16x.
+//  - Al capturar la velocidad del usuario se descarta si es >2: si el estado
+//    se resetea a mitad de anuncio (cambio de URL), el siguiente tick
+//    capturaba 16 como "velocidad del usuario" y la restauracion la
+//    reimplantaba.
+//  - Selectores de salto ampliados a la UI 2024+ (#ytp-skip-ad button).
 'use strict';
 
 (function YouTubeBlocker() {
   if (!location.hostname.includes('youtube.com')) return;
+  if (window.__shieldxYTv13) return;   // idempotente (recargas del content script)
+  window.__shieldxYTv13 = true;
 
   // ── Estado ────────────────────────────────────────────────────────────────
-  // content.js (isolated world) escribe el atributo en cuanto resuelve el
-  // storage. Si aún no está, se asume activo y el CustomEvent corrige en ms.
   function readAttr() {
     const v = document.documentElement.getAttribute('data-shieldx-yt');
     return v === null ? true : v !== '0';
@@ -27,8 +35,6 @@
   let ytEnabled = readAttr();
 
   window.addEventListener('__shieldx_yt_toggle', (e) => {
-    // Si el detail no sobrevive al salto entre mundos, mandar el atributo:
-    // interpretarlo como "false" apagaría el bloqueo por error.
     const next = (e.detail && typeof e.detail.enabled === 'boolean')
       ? e.detail.enabled
       : readAttr();
@@ -46,10 +52,11 @@
     'ytd-display-ad-renderer', 'ytd-action-companion-ad-renderer',
     'ytd-statement-banner-renderer', 'ytd-banner-promo-renderer',
     'ytd-shopping-companion-ad-renderer', 'ytd-companion-slot-renderer',
-    'ytd-merch-shelf-renderer',
+    'ytd-merch-shelf-renderer', 'ytm-companion-ad-renderer',
   ];
 
-  const AD_TAG_SELECTOR = AD_TAGS.join(',');
+  const AD_TAG_SELECTOR = AD_TAG_SELECTOR_BUILD();
+  function AD_TAG_SELECTOR_BUILD() { return AD_TAGS.join(','); }
   const AD_TAG_SET = new Set(AD_TAGS.map(t => t.toUpperCase()));
 
   const CSS = `
@@ -77,54 +84,112 @@
 
   applyCSS();
 
-  // ── Suprimir el pre-roll en el propio objeto del reproductor ──────────────
-  // YouTube asigna window.ytInitialPlayerResponse desde un script inline. Se
-  // intercepta la asignación y se le quitan las claves de anuncios antes de que
-  // el reproductor lo consuma. No se toca ninguna petición de red.
+  // ── Poda de claves de anuncio en los datos del reproductor ────────────────
+  // Profunda: get_watch incrusta el playerResponse en niveles que cambian, asi
+  // que se borran las claves alla donde aparezcan. Son lo bastante especificas
+  // como para no existir con otro significado.
   const AD_KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
 
-  function stripAds(obj) {
-    if (!obj || typeof obj !== 'object') return obj;
+  function stripAds(node, depth) {
+    depth = depth || 0;
+    if (!node || typeof node !== 'object' || depth > 12) return false;
+    let changed = false;
     try {
-      for (const k of AD_KEYS) if (k in obj) delete obj[k];
+      if (!Array.isArray(node)) {
+        for (const k of AD_KEYS) {
+          if (k in node) { delete node[k]; changed = true; }
+        }
+      }
+      for (const key in node) {
+        const v = node[key];
+        if (v && typeof v === 'object' && stripAds(v, depth + 1)) changed = true;
+      }
     } catch (_) { /* objeto sellado: se deja tal cual */ }
-    return obj;
+    return changed;
   }
 
+  // 1) El primer video: ytInitialPlayerResponse lo asigna un script inline.
   try {
     let stored = window.ytInitialPlayerResponse;
     Object.defineProperty(window, 'ytInitialPlayerResponse', {
       configurable: true,
       get() { return stored; },
-      set(v) { stored = ytEnabled ? stripAds(v) : v; }
+      set(v) { if (ytEnabled) stripAds(v); stored = v; }
     });
     if (stored) stripAds(stored);
   } catch (_) { /* si no se puede, queda el salto activo como respaldo */ }
 
-  // ── Salto activo ──────────────────────────────────────────────────────────
+  // 2) Los siguientes: llegan por fetch. Medido en vivo: la navegacion SPA usa
+  //    /youtubei/v1/get_watch; /player sigue existiendo en otros flujos y los
+  //    shorts usan los endpoints reel. Se poda el JSON de la respuesta.
+  //    Cualquier fallo -> respuesta original intacta; jamas se bloquea ni se
+  //    retiene la peticion (leccion de v10). /player/ad_break NO casa con este
+  //    patron y se deja pasar a proposito.
+  const PLAYER_ENDPOINT =
+    /\/youtubei\/v1\/(player(\?|$)|get_watch(\?|$)|reel\/reel_watch_sequence(\?|$)|reel\/reel_item_watch(\?|$))/;
+  const nativeFetch = window.fetch;
+
+  window.fetch = function fetch(input, init) {
+    const p = nativeFetch.apply(this, arguments);
+    if (!ytEnabled) return p;
+
+    let url = '';
+    try {
+      url = typeof input === 'string' ? input
+          : (input instanceof Request ? input.url : String(input || ''));
+    } catch (_) { return p; }
+    if (!PLAYER_ENDPOINT.test(url)) return p;
+
+    return p.then((resp) => {
+      if (!resp || !resp.ok) return resp;
+      return resp.clone().text().then((text) => {
+        try {
+          const data = JSON.parse(text);
+          if (!stripAds(data)) return resp;
+          return new Response(JSON.stringify(data), {
+            status: resp.status,
+            statusText: resp.statusText,
+            headers: resp.headers
+          });
+        } catch (_) { return resp; }
+      }).catch(() => resp);
+    });
+  };
+
+  // ── Salto activo (respaldo, y unico recurso contra anuncios cosidos) ──────
   let savedMuted = false;
   let savedRate  = 1;
   let wasInAd    = false;
 
   const SKIP_SELECTOR = [
-    '.ytp-ad-skip-button-modern .ytp-ad-skip-button-slot',
+    '#ytp-skip-ad button',
     '.ytp-skip-ad-button',
+    '.ytp-ad-skip-button-modern .ytp-ad-skip-button-slot',
     '.ytp-ad-skip-button',
     'button.ytp-ad-skip-button-modern',
     '.ytp-ad-skip-button-text',
     '[class*="ytp-ad-skip"]',
+    '[class*="ytp-skip-ad"]',
   ].join(',');
 
   function visible(el) {
     return !!el && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   }
 
+  // La UNICA fuente fiable de "hay anuncio" es la clase del propio reproductor.
+  // Detectar por presencia de nodos .ytp-ad-* se quedaba pegado: esos nodos
+  // persisten ocultos al acabar el anuncio, inAd nunca volvia a false y el 16x
+  // se aplicaba al video de verdad.
+  function adIsShowing() {
+    const p = document.getElementById('movie_player');
+    return !!p && (p.classList.contains('ad-showing') ||
+                   p.classList.contains('ad-interrupting'));
+  }
+
   function skipAd() {
     if (!ytEnabled) return;
 
-    const inAd = !!document.querySelector(
-      '.ad-showing, .ytp-ad-preview-container, .ytp-ad-duration-remaining'
-    );
+    const inAd = adIsShowing();
     const video = inAd || wasInAd
       ? document.querySelector('video.html5-main-video')
       : null;
@@ -132,15 +197,19 @@
     if (inAd && video) {
       if (!wasInAd) {
         savedMuted = video.muted;
-        savedRate  = video.playbackRate || 1;
+        // Si el estado se reseteo a mitad de anuncio (cambio de URL), aqui se
+        // capturaria el 16 de nuestro propio acelerado como "velocidad del
+        // usuario". Ninguna velocidad legitima pasa de 2.
+        const r = video.playbackRate || 1;
+        savedRate  = r > 2 ? 1 : r;
         wasInAd    = true;
       }
 
       const skipBtn = document.querySelector(SKIP_SELECTOR);
       if (visible(skipBtn)) { skipBtn.click(); return; }
 
-      // Sin botón de saltar: acelerar en silencio. No se toca currentTime,
-      // que es lo que dejaba el reproductor en "cargando" indefinido.
+      // Sin boton: acelerar en silencio. No se toca currentTime, que es lo que
+      // dejaba el reproductor en "cargando" indefinido.
       video.muted = true;
       if (video.playbackRate !== 16) video.playbackRate = 16;
       return;
@@ -172,16 +241,13 @@
     }
   }
 
-  // Las mutaciones se agrupan en un solo barrido por frame, y sólo sobre los
-  // subárboles que acaban de aparecer: barrer el documento entero en cada
-  // mutación es lo que hacía pesado el feed.
+  // Las mutaciones se agrupan en un solo barrido por frame, y solo sobre los
+  // subarboles que acaban de aparecer.
   let pending = false;
   let dirty   = [];
 
   function schedule(root) {
     if (!ytEnabled) return;
-    // dirty === null significa "barrer el documento completo" y gana sobre
-    // cualquier subárbol acumulado.
     if (!root || root === document.documentElement) dirty = null;
     else if (dirty !== null) dirty.push(root);
     if (pending) return;
@@ -222,7 +288,7 @@
     start();
   }
 
-  // YouTube navega sin recargar: reiniciar el estado en cada vídeo.
+  // YouTube navega sin recargar: reiniciar el estado en cada video.
   window.addEventListener('yt-navigate-finish', () => {
     wasInAd = false;
     schedule();

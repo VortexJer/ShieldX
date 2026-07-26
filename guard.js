@@ -129,34 +129,14 @@
     };
   } catch (_) {}
 
-  // ── Navegación por script sin gesto ───────────────────────────────────────
-  // window.location no se puede redefinir (es [Unforgeable]), pero sí los
-  // métodos del prototipo, que es lo que usan los redirectores.
-  function sameSite(url) {
-    try {
-      const d = new URL(url, location.href);
-      if (d.protocol !== 'http:' && d.protocol !== 'https:') return true;
-      const base = h => h.toLowerCase().replace(/^www\./, '').split('.').slice(-2).join('.');
-      return base(d.hostname) === base(location.hostname);
-    } catch (_) { return true; }
-  }
-
-  function allowNavigation(url) {
-    if (!enabled()) return true;
-    if (sameSite(url)) return true;      // dentro del sitio, libre
-    return gestureAuthorizes();          // fuera, sólo si lo has pedido tú
-  }
-
-  for (const method of ['assign', 'replace']) {
-    const native = Location.prototype[method];
-    if (typeof native !== 'function') continue;
-    try {
-      Location.prototype[method] = function (url) {
-        if (!allowNavigation(url)) { report('navigation', url); return; }
-        return native.apply(this, arguments);
-      };
-    } catch (_) {}
-  }
+  // ── Sobre la navegación forzada por location ──────────────────────────────
+  // Verificado en Chrome real: location.assign/replace y el setter de href son
+  // propiedades PROPIAS del objeto location, no configurables ([Unforgeable]).
+  // Parchear Location.prototype compila pero no intercepta nada, así que aquí
+  // no se intenta: daría una falsa sensación de protección. Esa vía se cubre
+  // con las reglas de red (rules/redirect.json bloquea los dominios de destino
+  // de las redes de redirección, incluido main_frame) y con la retirada de
+  // meta-refresh a otro dominio en content.js.
 
   // Nota: no se toca onbeforeunload. Las webs de anuncios lo usan para
   // retenerte, pero también lo usan los editores y formularios legítimos para
