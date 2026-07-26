@@ -38,6 +38,22 @@ function normalizeHost(host) {
   return String(host || '').toLowerCase().replace(/^www\./, '').trim();
 }
 
+// Copia de la lista de content.js: los content scripts clásicos no comparten
+// módulos con el popup. Si se toca una, hay que tocar la otra.
+const MAIL_HOSTS = [
+  'mail.google.com', 'inbox.google.com',
+  'outlook.live.com', 'outlook.office.com', 'outlook.office365.com', 'outlook.com',
+  'mail.yahoo.com', 'mail.proton.me', 'protonmail.com', 'mail.zoho.com',
+  'mail.aol.com', 'icloud.com', 'mail.ru', 'gmx.com', 'gmx.net', 'web.de',
+  'fastmail.com', 'zimbra.com', 'hey.com', 'tutanota.com', 'tuta.com',
+];
+const MAIL_PREFIX = /^(mail|webmail|correo|email|mbox|zimbra|roundcube|owa|imap)\./;
+
+function isMailApp(host) {
+  if (!host) return false;
+  return MAIL_HOSTS.some(p => host === p || host.endsWith('.' + p)) || MAIL_PREFIX.test(host);
+}
+
 function updateUI(enabled) {
   statusText.textContent = enabled ? 'ACTIVO' : 'PAUSADO';
   statusText.className   = enabled ? 'st-text on' : 'st-text off';
@@ -100,7 +116,8 @@ function refresh() {
     animateNumber(cookieCount,   res.cookiesBlocked);
     animateNumber(redirectCount, res.redirectsBlocked);
 
-    if (currentHost) {
+    // En clientes de correo el estado lo fija la carga inicial y no se toca.
+    if (currentHost && !isMailApp(currentHost)) {
       const excluded = (res.siteExcluded || []).some(d => {
         const p = normalizeHost(d);
         return currentHost === p || currentHost.endsWith('.' + p);
@@ -123,7 +140,14 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     } catch (_) {}
   }
 
-  if (currentHost) {
+  if (currentHost && isMailApp(currentHost)) {
+    // En el correo la capa de ocultado no entra nunca, aunque el sitio no esté
+    // excluido: el toggle no debe dar a entender lo contrario.
+    siteHostEl.textContent = currentHost + ' · correo';
+    siteToggle.disabled = true;
+    siteStatus.textContent = 'SIN OCULTAR';
+    siteStatus.className = 'yt-status';
+  } else if (currentHost) {
     siteHostEl.textContent = currentHost;
   } else {
     siteHostEl.textContent = 'no aplicable aquí';

@@ -1,4 +1,4 @@
-﻿// Arranque de youtube.js con stubs: comprueba el canal del toggle y que la
+// Arranque de youtube.js con stubs: comprueba el canal del toggle y que la
 // limpieza de ytInitialPlayerResponse no rompe el objeto del reproductor.
 const fs = require('fs');
 const path = require('path').join(__dirname, '..', 'youtube.js');
@@ -35,9 +35,9 @@ try {
   new Function('window', fs.readFileSync(path, 'utf8')).call(global.window, global.window);
   console.log('OK  youtube.js arranca');
 
-  // El reproductor asigna su respuesta: deben desaparecer sÃ³lo las claves de anuncio
+  // El reproductor asigna su respuesta: deben desaparecer sólo las claves de anuncio
   global.window.ytInitialPlayerResponse = {
-    videoDetails: { title: 'vÃ­deo' },
+    videoDetails: { title: 'vídeo' },
     streamingData: { formats: [1, 2] },
     adPlacements: [{ a: 1 }], playerAds: [{ b: 2 }], adSlots: [1],
   };
@@ -48,7 +48,7 @@ try {
     ? 'OK  anuncios eliminados y el resto del objeto intacto'
     : `FALLO limpio=${limpio} intacto=${intacto}`);
 
-  // El evento de toggle con detail invÃ¡lido no debe apagar el bloqueo
+  // El evento de toggle con detail inválido no debe apagar el bloqueo
   attr = '1';
   listeners['__shieldx_yt_toggle']({ detail: null });
   console.log('OK  toggle con detail nulo no lanza');

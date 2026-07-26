@@ -22,6 +22,15 @@ Los buscadores rotan las clases de sus anuncios y cambian dónde los colocan
 no se detectan por clase sino por **la etiqueta visible** —«Resultados
 patrocinados», «Sponsored», «Anuncio»—, que es lo único que no pueden quitar.
 
+### Clientes de correo
+
+En Gmail, Outlook, Proton y cualquier host tipo `mail.*` o `webmail.*`, la capa
+de ocultado **no entra nunca**. El cuerpo de un correo es HTML ajeno y
+arbitrario: puede traer cualquier nombre de clase o cualquier imagen con
+«banner» en la ruta, y ocultarlo significa esconderle correo al usuario. El
+anti-redirección, las descargas vigiladas y la capa de red siguen funcionando
+ahí con normalidad.
+
 ### Anti-redirección
 
 La regla es que un clic sólo autoriza una ventana o un salto de dominio si cayó

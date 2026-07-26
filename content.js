@@ -29,6 +29,23 @@ function hostMatches(pattern) {
   return !!p && (HOST === p || HOST.endsWith('.' + p));
 }
 
+// ── Clientes de correo web ───────────────────────────────────────────────────
+// Aquí la capa de ocultado no entra nunca. El cuerpo de un correo es HTML
+// ajeno y arbitrario: puede traer cualquier clase o cualquier imagen con
+// "banner" en la ruta, y ocultarlo significa esconderle correo al usuario.
+// El resto de ShieldX (anti-redirección, descargas vigiladas y la capa de red)
+// sigue funcionando con normalidad.
+const MAIL_HOSTS = [
+  'mail.google.com', 'inbox.google.com',
+  'outlook.live.com', 'outlook.office.com', 'outlook.office365.com', 'outlook.com',
+  'mail.yahoo.com', 'mail.proton.me', 'protonmail.com', 'mail.zoho.com',
+  'mail.aol.com', 'icloud.com', 'mail.ru', 'gmx.com', 'gmx.net', 'web.de',
+  'fastmail.com', 'zimbra.com', 'hey.com', 'tutanota.com', 'tuta.com',
+];
+const MAIL_PREFIX = /^(mail|webmail|correo|email|mbox|zimbra|roundcube|owa|imap)\./;
+
+const IS_MAIL_APP = MAIL_HOSTS.some(hostMatches) || MAIL_PREFIX.test(HOST);
+
 // ── Estado de YouTube hacia la MAIN world ────────────────────────────────────
 // youtube.js corre en world MAIN y no ve chrome.storage. No se puede usar un
 // <script> inline para pasarle el estado: la CSP del sitio lo bloquea. Se usa
@@ -58,9 +75,12 @@ function applyState(data) {
 
   const ytEnabled = data.ytAdBlock !== false && isActive();
   propagateYTState(ytEnabled);
+
+  // El anti-redirección no depende de la capa de ocultado: sigue activo en el
+  // correo, donde además hace falta (enlaces de phishing que abren ventanas).
   propagateGuardState(data.guardEnabled !== false && isActive());
 
-  if (isActive()) start(); else stop();
+  if (isActive() && !IS_MAIL_APP) start(); else stop();
 }
 
 chrome.storage.local.get(STATE_KEYS, applyState);
@@ -246,7 +266,7 @@ let weakQuery   = '';
 function buildQueries() {
   const strong = [...STRONG_SELECTORS];
   const weak   = [...WEAK_SELECTORS];
-  if (/(^|\.)google\.[a-z.]+$/.test(HOST)) strong.push(...GOOGLE_SELECTORS);
+  if (IS_GOOGLE_SEARCH)                    strong.push(...GOOGLE_SELECTORS);
   if (hostMatches('bing.com'))             strong.push(...BING_SELECTORS);
   if (hostMatches('duckduckgo.com'))       strong.push(...DDG_SELECTORS);
   if (hostMatches('yahoo.com'))            strong.push(...YAHOO_SELECTORS);
@@ -260,8 +280,13 @@ function buildQueries() {
 // caducando), así que los selectores fijos dejan de valer. Lo que no cambia es
 // la etiqueta legal visible: "Patrocinado", "Sponsored", "Anuncio". Se busca ese
 // texto y se oculta el bloque de resultado que lo contiene.
+// Sólo el buscador: con /(^|\.)google\./ entraban también mail.google.com,
+// drive.google.com y docs.google.com, que no tienen resultados que filtrar y
+// sí clases ofuscadas que pueden coincidir por casualidad.
+const IS_GOOGLE_SEARCH = /^google\.[a-z.]+$/.test(HOST);
+
 const IS_SEARCH =
-  /(^|\.)google\.[a-z.]+$/.test(HOST) || hostMatches('bing.com') ||
+  IS_GOOGLE_SEARCH || hostMatches('bing.com') ||
   hostMatches('duckduckgo.com')       || hostMatches('yahoo.com') ||
   hostMatches('ecosia.org')           || hostMatches('search.brave.com') ||
   hostMatches('startpage.com')        || hostMatches('qwant.com');
