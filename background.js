@@ -11,14 +11,18 @@
 'use strict';
 
 const VALID_MSG_TYPES = new Set([
-  'BLOCKED', 'COOKIE_BLOCKED', 'GET_STATS', 'SET_SITE', 'RESET_STATS'
+  'BLOCKED', 'COOKIE_BLOCKED', 'GET_STATS', 'SET_SITE', 'RESET_STATS',
+  'GESTURE', 'GUARD_BLOCKED'
 ]);
 
 const DEFAULTS = {
   enabled: true,
   ytAdBlock: true,
+  guardEnabled: true,     // anti pop-under y anti redirección forzada
+  downloadGuard: true,    // confirmar descargas que el usuario no ha pedido
   blockedTotal: 0,
   cookiesBlocked: 0,
+  redirectsBlocked: 0,
   siteExcluded: []
 };
 
@@ -138,19 +142,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // El content script avisa de cada clic real. Sirve para distinguir la
+  // descarga que ha pedido el usuario de la que arranca sola.
+  if (msg.type === 'GESTURE') {
+    if (tabId !== undefined) lastGesture.set(tabId, Date.now());
+    return;
+  }
+
+  if (msg.type === 'GUARD_BLOCKED') {
+    addToTotal(1);
+    if (tabId !== undefined) {
+      pageCounts.set(tabId, (pageCounts.get(tabId) || 0) + 1);
+      paintBadge(tabId);
+    }
+    chrome.storage.local.get(['redirectsBlocked'], (data) => {
+      chrome.storage.local.set({ redirectsBlocked: (data.redirectsBlocked || 0) + 1 });
+    });
+    return;
+  }
+
   if (msg.type === 'GET_STATS') {
     const wanted = typeof msg.tabId === 'number' ? msg.tabId : null;
     chrome.storage.local.get(
-      ['blockedTotal', 'cookiesBlocked', 'enabled', 'ytAdBlock', 'siteExcluded'],
+      ['blockedTotal', 'cookiesBlocked', 'redirectsBlocked', 'enabled',
+       'ytAdBlock', 'guardEnabled', 'downloadGuard', 'siteExcluded'],
       (data) => {
         const excluded = Array.isArray(data.siteExcluded) ? data.siteExcluded : [];
         sendResponse({
-          blockedTotal:   data.blockedTotal   || 0,
-          cookiesBlocked: data.cookiesBlocked || 0,
-          enabled:        data.enabled  !== false,
-          ytAdBlock:      data.ytAdBlock !== false,
-          pageCount:      wanted !== null ? (pageCounts.get(wanted) || 0) : 0,
-          siteExcluded:   excluded
+          blockedTotal:     data.blockedTotal     || 0,
+          cookiesBlocked:   data.cookiesBlocked   || 0,
+          redirectsBlocked: data.redirectsBlocked || 0,
+          enabled:          data.enabled       !== false,
+          ytAdBlock:        data.ytAdBlock     !== false,
+          guardEnabled:     data.guardEnabled  !== false,
+          downloadGuard:    data.downloadGuard !== false,
+          pageCount:        wanted !== null ? (pageCounts.get(wanted) || 0) : 0,
+          siteExcluded:     excluded
         });
       });
     return true; // respuesta asíncrona
@@ -173,11 +200,93 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'RESET_STATS') {
     pageCounts.clear();
     pendingTotal = 0;
-    chrome.storage.local.set({ blockedTotal: 0, cookiesBlocked: 0 }, () => {
-      sendResponse({ ok: true });
-    });
+    chrome.storage.local.set(
+      { blockedTotal: 0, cookiesBlocked: 0, redirectsBlocked: 0 },
+      () => sendResponse({ ok: true }));
     return true;
   }
+});
+
+// ── Descargas que el usuario no ha pedido ────────────────────────────────────
+// Una descarga que arranca sin que hayas tocado nada en los últimos segundos es
+// el patrón de las webs que te cuelan un .exe al entrar. Se pausa y se pregunta.
+const lastGesture = new Map();   // tabId -> instante del último clic real
+const GESTURE_WINDOW = 4000;     // ms que se considera "lo ha pedido el usuario"
+const pendingDownloads = new Map();   // notificationId -> downloadId
+
+function askedByUser(item) {
+  // Descargas iniciadas por la propia interfaz de Chrome (Guardar como…) o sin
+  // pestaña asociada: no hay nada que vigilar.
+  if (typeof item.tabId === 'number' && item.tabId >= 0) {
+    const t = lastGesture.get(item.tabId);
+    if (t && Date.now() - t < GESTURE_WINDOW) return true;
+    return false;
+  }
+  return true;
+}
+
+function describe(item) {
+  let origen = '';
+  try { origen = new URL(item.finalUrl || item.url || '').hostname; } catch (_) {}
+  const nombre = (item.filename || '').split(/[\\/]/).pop() || '(sin nombre)';
+  const tam = item.fileSize > 0
+    ? ` · ${(item.fileSize / 1048576).toFixed(1)} MB`
+    : '';
+  return { nombre, cuerpo: `${nombre}${tam}\nDesde: ${origen || 'origen desconocido'}` };
+}
+
+chrome.downloads.onCreated.addListener((item) => {
+  chrome.storage.local.get(['enabled', 'downloadGuard'], (data) => {
+    if (data.enabled === false || data.downloadGuard === false) return;
+    if (item.state !== 'in_progress') return;
+    if (askedByUser(item)) return;
+
+    chrome.downloads.pause(item.id, () => {
+      if (chrome.runtime.lastError) return;   // ya terminó o no se puede pausar
+
+      const { cuerpo } = describe(item);
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'ShieldX ha parado una descarga que no pediste',
+        message: cuerpo,
+        requireInteraction: true,
+        buttons: [{ title: 'Permitir' }, { title: 'Cancelar y borrar' }]
+      }, (notificationId) => {
+        if (chrome.runtime.lastError || !notificationId) {
+          // Sin notificación no se puede preguntar: ante la duda, se cancela.
+          chrome.downloads.cancel(item.id, () => void chrome.runtime.lastError);
+          return;
+        }
+        pendingDownloads.set(notificationId, item.id);
+      });
+    });
+  });
+});
+
+chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
+  const downloadId = pendingDownloads.get(notificationId);
+  if (downloadId === undefined) return;
+  pendingDownloads.delete(notificationId);
+
+  if (buttonIndex === 0) {
+    chrome.downloads.resume(downloadId, () => void chrome.runtime.lastError);
+  } else {
+    chrome.downloads.cancel(downloadId, () => {
+      void chrome.runtime.lastError;
+      chrome.downloads.erase({ id: downloadId }, () => void chrome.runtime.lastError);
+    });
+  }
+  chrome.notifications.clear(notificationId);
+});
+
+// Cerrar la notificación sin elegir deja la descarga cancelada: es la opción
+// segura para algo que no se pidió.
+chrome.notifications.onClosed.addListener((notificationId) => {
+  const downloadId = pendingDownloads.get(notificationId);
+  if (downloadId === undefined) return;
+  pendingDownloads.delete(notificationId);
+  chrome.downloads.cancel(downloadId, () => void chrome.runtime.lastError);
 });
 
 // ── Ciclo de vida de las pestañas ────────────────────────────────────────────

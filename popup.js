@@ -25,6 +25,11 @@ const ytStatus     = el('ytStatus');
 const siteToggle   = el('siteToggle');
 const siteStatus   = el('siteStatus');
 const siteHostEl   = el('siteHost');
+const guardToggle  = el('guardToggle');
+const guardStatus  = el('guardStatus');
+const dlToggle     = el('dlToggle');
+const dlStatus     = el('dlStatus');
+const redirectCount = el('redirectCount');
 
 let currentTabId = null;
 let currentHost  = '';
@@ -44,6 +49,12 @@ function updateYTUI(enabled) {
   ytToggle.checked     = enabled;
   ytStatus.textContent = enabled ? 'ACTIVO' : 'PAUSADO';
   ytStatus.className   = enabled ? 'yt-status on' : 'yt-status off';
+}
+
+function updateSwitchUI(input, label, on) {
+  input.checked     = on;
+  label.textContent = on ? 'ACTIVO' : 'PAUSADO';
+  label.className   = on ? 'yt-status on' : 'yt-status off';
 }
 
 function updateSiteUI(active) {
@@ -82,9 +93,12 @@ function refresh() {
     toggle.checked = res.enabled;
     updateUI(res.enabled);
     updateYTUI(res.ytAdBlock);
-    animateNumber(totalCount,   res.blockedTotal);
-    animateNumber(sessionCount, res.pageCount);
-    animateNumber(cookieCount,  res.cookiesBlocked);
+    updateSwitchUI(guardToggle, guardStatus, res.guardEnabled);
+    updateSwitchUI(dlToggle,    dlStatus,    res.downloadGuard);
+    animateNumber(totalCount,    res.blockedTotal);
+    animateNumber(sessionCount,  res.pageCount);
+    animateNumber(cookieCount,   res.cookiesBlocked);
+    animateNumber(redirectCount, res.redirectsBlocked);
 
     if (currentHost) {
       const excluded = (res.siteExcluded || []).some(d => {
@@ -150,12 +164,25 @@ siteToggle.addEventListener('change', () => {
   );
 });
 
+guardToggle.addEventListener('change', () => {
+  const on = guardToggle.checked;
+  chrome.storage.local.set({ guardEnabled: on });
+  updateSwitchUI(guardToggle, guardStatus, on);
+});
+
+dlToggle.addEventListener('change', () => {
+  const on = dlToggle.checked;
+  chrome.storage.local.set({ downloadGuard: on });
+  updateSwitchUI(dlToggle, dlStatus, on);
+});
+
 resetBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'RESET_STATS' }, () => {
     void chrome.runtime.lastError;
-    animateNumber(totalCount,   0);
-    animateNumber(sessionCount, 0);
-    animateNumber(cookieCount,  0);
+    animateNumber(totalCount,    0);
+    animateNumber(sessionCount,  0);
+    animateNumber(cookieCount,   0);
+    animateNumber(redirectCount, 0);
   });
 });
 

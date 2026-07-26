@@ -42,6 +42,15 @@ function propagateYTState(ytEnabled) {
   }));
 }
 
+// guard.js corre en world MAIN y lee su estado del mismo modo.
+function propagateGuardState(on) {
+  try {
+    document.documentElement.setAttribute('data-shieldx-guard', on ? '1' : '0');
+  } catch (_) {}
+}
+
+const STATE_KEYS = ['enabled', 'ytAdBlock', 'guardEnabled', 'siteExcluded'];
+
 function applyState(data) {
   globalEnabled = data.enabled !== false;
   const list = Array.isArray(data.siteExcluded) ? data.siteExcluded : [];
@@ -49,17 +58,42 @@ function applyState(data) {
 
   const ytEnabled = data.ytAdBlock !== false && isActive();
   propagateYTState(ytEnabled);
+  propagateGuardState(data.guardEnabled !== false && isActive());
 
   if (isActive()) start(); else stop();
 }
 
-chrome.storage.local.get(['enabled', 'ytAdBlock', 'siteExcluded'], applyState);
+chrome.storage.local.get(STATE_KEYS, applyState);
 
 // Reaccionar en TODAS las pestañas, no sólo en la activa.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (!('enabled' in changes) && !('ytAdBlock' in changes) && !('siteExcluded' in changes)) return;
-  chrome.storage.local.get(['enabled', 'ytAdBlock', 'siteExcluded'], applyState);
+  if (!STATE_KEYS.some(k => k in changes)) return;
+  chrome.storage.local.get(STATE_KEYS, applyState);
+});
+
+// ── Puente con guard.js ──────────────────────────────────────────────────────
+// El service worker necesita saber cuándo has hecho clic de verdad para poder
+// distinguir la descarga que pides tú de la que arranca sola.
+let lastGestureSent = 0;
+function noteGesture() {
+  const now = Date.now();
+  if (now - lastGestureSent < 1000) return;   // un aviso por segundo basta
+  lastGestureSent = now;
+  try {
+    chrome.runtime.sendMessage({ type: 'GESTURE' }, () => void chrome.runtime.lastError);
+  } catch (_) {}
+}
+
+for (const type of ['pointerdown', 'keydown']) {
+  window.addEventListener(type, (e) => { if (e.isTrusted) noteGesture(); }, true);
+}
+
+window.addEventListener('__shieldx_guard_block', () => {
+  killOverlays();   // el que intentó abrir la ventana suele ser un overlay
+  try {
+    chrome.runtime.sendMessage({ type: 'GUARD_BLOCKED' }, () => void chrome.runtime.lastError);
+  } catch (_) {}
 });
 
 // ── Selectores inequívocos: se ocultan siempre, también por CSS ──────────────
@@ -430,6 +464,48 @@ function sweep() {
   if (removed > 0) report(removed);
 }
 
+// ── Capas que roban el primer clic ───────────────────────────────────────────
+// En las webs de descarga y streaming pirata hay una capa transparente encima
+// de todo: pulses donde pulses, el clic se lo come ella y abre otra pestaña.
+// En vez de recorrer el DOM se mira qué hay justo bajo el centro de la pantalla,
+// que es donde está el botón que el usuario cree estar pulsando.
+function isClickTrap(el) {
+  if (!el || el === document.body || el === document.documentElement) return false;
+  if (STRUCTURAL.has(el.tagName)) return false;
+
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+  if (r.width * r.height < vw * vh * 0.85) return false;      // no cubre la pantalla
+
+  if ((el.textContent || '').trim().length > 10) return false; // tiene contenido
+  if (el.querySelector('img,video,canvas,svg,input,form')) return false;
+
+  const s = getComputedStyle(el);
+  if (s.position !== 'fixed' && s.position !== 'absolute') return false;
+
+  // Debe ser algo pulsable: un backdrop de modal legítimo no lo es.
+  const pulsable = el.tagName === 'A' || s.cursor === 'pointer' ||
+                   el.hasAttribute('onclick') || el.hasAttribute('href');
+  return pulsable;
+}
+
+function killOverlays() {
+  if (!isActive()) return 0;
+  const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+  let n = 0;
+  // Varias pasadas: suelen venir apiladas de dos en dos.
+  for (let i = 0; i < 3; i++) {
+    let el;
+    try { el = document.elementFromPoint(Math.round(vw / 2), Math.round(vh / 2)); }
+    catch (_) { break; }
+    if (!isClickTrap(el)) break;
+    try { el.remove(); } catch (_) { hide(el); }
+    n++;
+  }
+  if (n > 0) report(n);
+  return n;
+}
+
 // ── CSS inyectado (sólo selectores inequívocos) ──────────────────────────────
 const CSS_ID = 'shieldx-css';
 
@@ -464,6 +540,7 @@ function runPasses() {
   lastRun = performance.now();
   sweep();
   skipCookies();
+  if (domReady) killOverlays();
 }
 
 function schedule() {

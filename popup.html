@@ -276,10 +276,15 @@
       <div class="stat-n" id="totalCount">0</div>
       <div class="stat-l">Total bloqueado</div>
     </div>
-    <div class="stat stat-full">
+    <div class="stat">
       <span class="stat-ico">🍪</span>
       <div class="stat-n" id="cookieCount">0</div>
-      <div class="stat-l">Banners de cookies rechazados</div>
+      <div class="stat-l">Cookies rechazadas</div>
+    </div>
+    <div class="stat">
+      <span class="stat-ico">↩</span>
+      <div class="stat-n" id="redirectCount">0</div>
+      <div class="stat-l">Redirecciones cortadas</div>
     </div>
   </div>
 
@@ -315,7 +320,8 @@
       <div class="sec-item">Mensajes validados por origen</div>
       <div class="sec-item">Sin eval() ni innerHTML dinámico</div>
       <div class="sec-item">Sin web_accessible_resources</div>
-      <div class="sec-item">Sin webNavigation (permiso eliminado)</div>
+      <div class="sec-item">Sin webNavigation ni historial</div>
+      <div class="sec-item">Descargas: sólo pausar y preguntar</div>
     </div>
   </div>
 
@@ -333,6 +339,42 @@
       <span class="yt-status on" id="ytStatus">ACTIVO</span>
       <label class="tgl">
         <input type="checkbox" id="ytToggle" checked>
+        <div class="tgl-track"><div class="tgl-thumb"></div></div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Anti-redirección -->
+  <div class="yt-section">
+    <div class="yt-l">
+      <span class="yt-ico">🚫</span>
+      <div class="yt-info">
+        <span class="yt-name">Anti-redirección</span>
+        <span class="yt-desc">Corta pop-unders y saltos a otra web sin permiso</span>
+      </div>
+    </div>
+    <div class="yt-r">
+      <span class="yt-status on" id="guardStatus">ACTIVO</span>
+      <label class="tgl">
+        <input type="checkbox" id="guardToggle" checked>
+        <div class="tgl-track"><div class="tgl-thumb"></div></div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Descargas -->
+  <div class="yt-section">
+    <div class="yt-l">
+      <span class="yt-ico">⬇</span>
+      <div class="yt-info">
+        <span class="yt-name">Descargas vigiladas</span>
+        <span class="yt-desc">Pregunta si un fichero se descarga sin pedirlo</span>
+      </div>
+    </div>
+    <div class="yt-r">
+      <span class="yt-status on" id="dlStatus">ACTIVO</span>
+      <label class="tgl">
+        <input type="checkbox" id="dlToggle" checked>
         <div class="tgl-track"><div class="tgl-thumb"></div></div>
       </label>
     </div>
