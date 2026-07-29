@@ -45,10 +45,13 @@ global.document = {
 global.location = { href: 'https://sitio-pirata.example/ver/pelicula', hostname: 'sitio-pirata.example' };
 global.window = {
   location: global.location,
+  innerWidth: 1280, innerHeight: 800,
   addEventListener(type, fn) { (handlers[type] = handlers[type] || []).push(fn); },
   dispatchEvent(e) { if (e.type === '__shieldx_guard_block') bloqueos.push(e.detail); return true; },
   open(url) { aperturasReales++; return { real: true, url }; },
 };
+// El cursor computado se lee de la propiedad `cursor` del stub.
+global.getComputedStyle = (el) => ({ cursor: (el && el.cursor) || 'auto' });
 
 const locationAssignOriginal  = global.Location.prototype.assign;
 const locationReplaceOriginal = global.Location.prototype.replace;
@@ -112,7 +115,50 @@ clicNativo = 0;
 enlaceReal.click();
 comprobar('un enlace normal sigue funcionando', clicNativo === 1);
 
-// 7. Con el guard apagado no se estorba a nadie.
+// 7. Botón hecho con <div> (React y compañía): cursor pointer y tamaño de
+//    control. Antes parecía muerto: su pop-up salía bloqueado.
+const divBoton = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  getBoundingClientRect: () => ({ width: 140, height: 44 }),
+});
+aperturasReales = 0;
+gesto(divBoton);
+r = global.window.open('https://oauth.example/popup');
+comprobar('clic en botón <div> con cursor pointer autoriza la ventana',
+  aperturasReales === 1 && r.real === true);
+
+// 8. La trampa clásica: pointer en una capa a pantalla completa.
+const capa = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  getBoundingClientRect: () => ({ width: 1280, height: 800 }),
+});
+gesto(capa);
+r = global.window.open('https://porno-scam.example');
+comprobar('pointer a pantalla completa NO autoriza', aperturasReales === 1 && !r.real);
+
+// 9. Pointer heredado de un body{cursor:pointer} (otra variante de la trampa).
+const cuerpo = Object.assign(new global.HTMLElement(), { cursor: 'pointer' });
+global.document.body = cuerpo;
+const hijoPequeno = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: cuerpo,
+  getBoundingClientRect: () => ({ width: 60, height: 20 }),
+});
+gesto(hijoPequeno);
+r = global.window.open('https://porno-scam.example');
+comprobar('pointer heredado del body NO autoriza', aperturasReales === 1 && !r.real);
+
+// 10. Descarga programática: <a> con blob creado al vuelo tras un gesto
+//     cualquiera (el botón "Exportar"). Antes se bloqueaba y el botón moría.
+const descarga = new global.HTMLAnchorElement();
+descarga.isConnected = false;
+descarga.href = 'blob:https://app.example/uuid';
+descarga.getAttribute = () => null;
+clicNativo = 0;
+gesto(fondo);
+descarga.click();
+comprobar('descarga blob programática tras un gesto, permitida', clicNativo === 1);
+
+// 11. Con el guard apagado no se estorba a nadie.
 guardAttr = '0';
 aperturasReales = 0;
 r = global.window.open('https://lo-que-sea.example');

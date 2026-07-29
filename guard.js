@@ -39,16 +39,46 @@
   }
 
   // ¿El gesto fue sobre algo que de verdad abre una ventana?
+  // No basta con <a>/<button>: media web moderna hace los botones con un <div>
+  // y un handler, y con la lista corta esos botones parecían muertos (el
+  // pop-up de OAuth o de configuración salía bloqueado).
+  const LEGIT_QUERY =
+    'a[href],button,input,select,textarea,label,summary,option,' +
+    '[role="button"],[role="link"],[role="menuitem"],[role="menuitemradio"],' +
+    '[role="option"],[role="tab"],[role="switch"],[role="checkbox"],[onclick]';
+
+  // Botón hecho con <div>: cursor pointer. Pero la trampa clásica pone el
+  // pointer en una capa a pantalla completa (o en el body entero), así que se
+  // sube hasta la RAÍZ del pointer —el ancestro más alto que sigue en
+  // pointer— y se exige que tenga tamaño de control, no de página.
+  function pointerRootIsControl(el) {
+    try {
+      if (typeof getComputedStyle !== 'function') return false;
+      if (getComputedStyle(el).cursor !== 'pointer') return false;
+      let root = el;
+      while (root.parentElement &&
+             getComputedStyle(root.parentElement).cursor === 'pointer') {
+        root = root.parentElement;
+      }
+      if (root === document.body || root === document.documentElement) return false;
+      const r = root.getBoundingClientRect();
+      const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+      return r.width * r.height < vw * vh * 0.5;
+    } catch (_) { return false; }
+  }
+
   function gestureLooksLegit() {
     if (!gestureTarget || !gestureTarget.closest) return false;
-    return !!gestureTarget.closest('a[href],button,[role="button"],input[type="submit"],[onclick]');
+    if (gestureTarget.closest(LEGIT_QUERY)) return true;
+    return pointerRootIsControl(gestureTarget);
   }
 
   // Un gesto sólo autoriza si es reciente Y cayó sobre algo pulsable. Que el
   // usuario haya hecho clic en el reproductor o en el fondo de la página no es
   // permiso para nada: ese clic es precisamente el que secuestran.
+  // 1,5 s de margen: los pop-ups de OAuth suelen abrirse tras un fetch.
   function gestureAuthorizes() {
-    if (Date.now() - lastGesture > 1000) return false;
+    if (Date.now() - lastGesture > 1500) return false;
     return gestureLooksLegit();
   }
 
@@ -106,8 +136,16 @@
         const target = (this.getAttribute('target') || '').toLowerCase();
         const suelto = !this.isConnected;   // creado al vuelo, nunca insertado
         if ((target === '_blank' || suelto) && !allowNewWindow()) {
-          report('anchor', this.href);
-          return;
+          // Descarga programática legítima: el botón "Exportar" que crea un
+          // <a download> o un blob:/data: al vuelo. No es el vector del
+          // pop-under, que necesita navegar a un dominio http de spam.
+          const href = String(this.href || '');
+          const descarga = this.hasAttribute('download') ||
+                           href.startsWith('blob:') || href.startsWith('data:');
+          if (!(descarga && Date.now() - lastGesture < 2500)) {
+            report('anchor', this.href);
+            return;
+          }
         }
       }
       return nativeClick.apply(this, arguments);

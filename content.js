@@ -18,6 +18,18 @@
 
 const HOST = location.hostname.toLowerCase().replace(/^www\./, '');
 
+// ¿Estamos en el marco superior o dentro de un iframe?
+// Importa mucho: el banner de un CMP suele vivir en su propio iframe, y este
+// script corre también ahí dentro. Ocultarlo DESDE DENTRO deja el iframe
+// vacío pero presente — a pantalla completa, con el velo del sitio puesto y el
+// scroll bloqueado. La página queda peor que sin tocar nada: no se puede ni
+// leer ni responder al aviso. Verificado en vivo en as.com.
+// Los banners solo se ocultan desde el marco superior, escondiendo el iframe
+// entero; si desde ahí no se reconoce, se deja intacto a propósito.
+const IS_TOP_FRAME = (() => {
+  try { return window === window.top; } catch (_) { return false; }
+})();
+
 let globalEnabled = true;   // interruptor maestro
 let siteExcluded  = false;  // este dominio está en la lista de excluidos
 let started       = false;  // ya se inyectó CSS / arrancó el observer
@@ -101,6 +113,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // El service worker necesita saber cuándo has hecho clic de verdad para poder
 // distinguir la descarga que pides tú de la que arranca sola.
 let lastGestureSent = 0;
+let lastUserGesture = 0;   // sin throttle: lo usan las guardias anti-falso-positivo
+
+function recentGesture(ms) { return Date.now() - lastUserGesture < ms; }
+
 function noteGesture() {
   const now = Date.now();
   if (now - lastGestureSent < 1000) return;   // un aviso por segundo basta
@@ -111,11 +127,16 @@ function noteGesture() {
 }
 
 for (const type of ['pointerdown', 'keydown']) {
-  window.addEventListener(type, (e) => { if (e.isTrusted) noteGesture(); }, true);
+  window.addEventListener(type, (e) => {
+    if (!e.isTrusted) return;
+    lastUserGesture = Date.now();
+    if (e.target && clickWantsCookieUI(e.target)) restoreCookieUI();
+    noteGesture();
+  }, true);
 }
 
 window.addEventListener('__shieldx_guard_block', () => {
-  killOverlays();   // el que intentó abrir la ventana suele ser un overlay
+  killOverlays(true);   // el que intentó abrir la ventana suele ser un overlay
   try {
     chrome.runtime.sendMessage({ type: 'GUARD_BLOCKED' }, () => void chrome.runtime.lastError);
   } catch (_) {}
@@ -502,6 +523,9 @@ function sweep() {
 function isClickTrap(el) {
   if (!el || el === document.body || el === document.documentElement) return false;
   if (STRUCTURAL.has(el.tagName)) return false;
+  // Nunca dentro de un diálogo: eso es un modal que alguien quiere ver.
+  try { if (el.closest && el.closest('dialog,[role="dialog"],[role="alertdialog"]')) return false; }
+  catch (_) {}
 
   const r = el.getBoundingClientRect();
   const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
@@ -519,8 +543,15 @@ function isClickTrap(el) {
   return pulsable;
 }
 
-function killOverlays() {
-  if (!isActive()) return 0;
+function killOverlays(force) {
+  // Igual que con las cookies: dentro de un iframe, la "capa a pantalla
+  // completa" es el propio contenido del iframe, no una trampa.
+  if (!isActive() || !IS_TOP_FRAME) return 0;
+  // Tras un clic del usuario, la capa que acaba de aparecer suele ser el
+  // backdrop de SU modal (un pop-up de configuración, un lightbox). Solo se
+  // actúa en caliente cuando viene del guard, que sí tiene la prueba del
+  // delito: la trampa acaba de intentar abrir una ventana.
+  if (!force && recentGesture(1500)) return 0;
   const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
   let n = 0;
   // Varias pasadas: suelen venir apiladas de dos en dos.
@@ -677,6 +708,13 @@ const COOKIE_HINT_QUERY =
 
 const COOKIE_TEXT = /cookie|consent|gdpr|rgpd|privacidad|privacy/;
 
+// Los diálogos genéricos exigen evidencia fuerte: mención explícita a cookies
+// Y vocabulario de consentimiento. "Privacy" a secas no vale — cualquier modal
+// de login o de registro enlaza la política de privacidad, y con la regla laxa
+// esos modales desaparecían (verificado: era la causa de "me bloquea pop-ups").
+const DIALOG_COOKIE_RE = /\bcookies?\b|\bgdpr\b|\brgpd\b|consentimiento/;
+const DIALOG_ACTION_RE = /aceptar|acepto|accept|agree|consent|rechazar|reject|configurar|preferencias|preferences|manage/;
+
 // Iframes de CMP (Sourcepoint, Quantcast, TrustArc…): el banner vive en un
 // iframe y desde el marco superior se oculta el iframe entero.
 const CMP_IFRAME_QUERY =
@@ -729,41 +767,105 @@ function unlockScroll() {
 function handleCookieContainer(node) {
   if (node.hasAttribute('data-sx-cookie')) return false;
   node.setAttribute('data-sx-cookie', '1');
-  hide(cookieTopContainer(node));
+  const top = cookieTopContainer(node);
+  top.setAttribute('data-sx-cookie', '1');   // para poder restaurarlo a petición
+  hide(top);
   hide(node);
   unlockScroll();
   reportCookie();
   return true;
 }
 
+// ── El usuario PIDE ver el CMP ───────────────────────────────────────────────
+// Verificado en Marca: el botón "Configuración de Cookies" del footer
+// re-muestra el MISMO nodo que se ocultó al cargar, y con los estilos inline
+// puestos el panel no aparecía jamás. Si el clic cae en un control que habla
+// de cookies, se restaura lo oculto ANTES de que corra el handler del sitio
+// (vamos en captura de pointerdown) y el ocultador se aparta 30 segundos.
+let cookieSettingsUntil = 0;
+
+const COOKIE_CLICK_RE = /cookie|consent|consentimiento|privacidad|privacy|rgpd|gdpr|cmp/i;
+
+function clickWantsCookieUI(target) {
+  let n = target;
+  for (let i = 0; n && n.nodeType === 1 && i < 5; i++, n = n.parentElement) {
+    const texto = (n.textContent || '').trim();
+    if (texto.length <= 80 && COOKIE_CLICK_RE.test(texto)) return true;
+    const cls = typeof n.className === 'string' ? n.className : '';
+    if (COOKIE_CLICK_RE.test(n.id || '') || COOKIE_CLICK_RE.test(cls)) return true;
+  }
+  return false;
+}
+
+function restoreCookieUI() {
+  cookieSettingsUntil = Date.now() + 30000;
+  let nodes;
+  try { nodes = document.querySelectorAll('[data-sx-cookie="1"]'); } catch (_) { return 0; }
+  let n = 0;
+  for (const el of nodes) {
+    n++;
+    el.style.removeProperty('display');
+    el.style.removeProperty('visibility');
+    el.style.removeProperty('height');
+    el.style.removeProperty('min-height');
+    el.style.removeProperty('overflow');
+    el.removeAttribute('data-sx');
+    el.setAttribute('data-sx-cookie', '0');   // elección del usuario: no volver a tocarlo
+  }
+  return n;
+}
+
+// Lo que aparece justo después de un clic lo ha abierto el usuario: el panel
+// de "Configurar cookies" del footer, un modal de ajustes… Un banner de verdad
+// aparece solo, sin gesto de por medio. Si además trae interruptores por
+// finalidad es un panel de preferencias y se respeta PARA SIEMPRE; un banner
+// llano que solo coincidió en el tiempo con un clic (navegación SPA) se deja
+// sin marcar y cae en la siguiente pasada.
+function skipUserInvoked(n) {
+  try {
+    if (n.querySelector('input[type="checkbox"],input[type="radio"],[role="switch"]')) {
+      n.setAttribute('data-sx-cookie', '0');
+    }
+  } catch (_) {}
+}
+
 function skipCookies() {
-  if (!isActive()) return;
+  if (!isActive() || !IS_TOP_FRAME) return;
+
+  const gestoReciente = recentGesture(1500) || Date.now() < cookieSettingsUntil;
 
   // 1) Contenedores conocidos e iframes de CMP
   const seen = new Set();
   try {
     for (const n of document.querySelectorAll(COOKIE_QUERY + ',' + CMP_IFRAME_QUERY)) {
-      if (isVisible(n)) seen.add(n);
+      if (n.hasAttribute('data-sx-cookie') || !isVisible(n)) continue;
+      if (gestoReciente) { skipUserInvoked(n); continue; }
+      seen.add(n);
     }
   } catch (_) {}
 
   // 2) Genéricos: flotantes con pinta de banner de consentimiento
   try {
     for (const el of document.querySelectorAll(COOKIE_HINT_QUERY)) {
-      if (seen.has(el) || !isVisible(el)) continue;
+      if (el.hasAttribute('data-sx-cookie') || seen.has(el) || !isVisible(el)) continue;
       const s = getComputedStyle(el);
       if (s.position !== 'fixed' && s.position !== 'sticky' && s.position !== 'absolute') continue;
       const t = normalizeText(el.textContent);
       if (!COOKIE_TEXT.test(t) || t.length > 4000) continue;
+      if (gestoReciente) { skipUserInvoked(el); continue; }
       seen.add(el);
     }
   } catch (_) {}
 
-  // 3) Diálogos con texto de consentimiento
+  // 3) Diálogos: solo con evidencia fuerte de cookies, y NUNCA los que el
+  //    usuario acaba de abrir — un diálogo tras un gesto es asunto suyo.
   try {
-    for (const d of document.querySelectorAll('[role="dialog"],[role="alertdialog"]')) {
-      if (seen.has(d) || !isVisible(d)) continue;
-      if (!COOKIE_TEXT.test(normalizeText(d.textContent || ''))) continue;
+    for (const d of document.querySelectorAll('[role="dialog"],[role="alertdialog"],dialog')) {
+      if (d.hasAttribute('data-sx-cookie') || seen.has(d) || !isVisible(d)) continue;
+      if (gestoReciente) { d.setAttribute('data-sx-cookie', '0'); continue; }
+      const t = normalizeText(d.textContent || '');
+      if (t.length > 6000) continue;
+      if (!DIALOG_COOKIE_RE.test(t) || !DIALOG_ACTION_RE.test(t)) continue;
       seen.add(d);
     }
   } catch (_) {}
@@ -908,8 +1010,11 @@ function startPick() {
   for (const [t, f] of pares) window.addEventListener(t, f, true);
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (typeof msg !== 'object' || msg === null) return;
   if (msg.type === 'PICK_START') startPick();
+  if (msg.type === 'COOKIE_SHOW' && IS_TOP_FRAME) {
+    sendResponse({ restaurados: restoreCookieUI() });
+  }
 });

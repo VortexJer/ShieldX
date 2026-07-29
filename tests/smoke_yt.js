@@ -47,6 +47,7 @@ function nativeFetchStub(url) {
 global.window = {
   location: { hostname: 'www.youtube.com', href: 'https://www.youtube.com/watch?v=x' },
   addEventListener: (t, f) => { listeners[t] = f; },
+  // guard.js no corre aqui; youtube.js registra sus propios listeners de gesto
   fetch: nativeFetchStub,
 };
 global.location = global.window.location;
@@ -79,6 +80,64 @@ try {
 
   timers.forEach(f => f());   // un tick de skipAd
   console.log('OK  skipAd corre sin anuncio en pantalla');
+
+  // Aviso "el reproductor se bloqueara": se retira el dialogo y se reanuda el
+  // video, sin pulsar ninguno de sus botones.
+  {
+    let dialogoQuitado = false, backdropQuitado = false, play = 0, clics = 0;
+    const dialogo = Object.assign(el(), {
+      tagName: 'TP-YT-PAPER-DIALOG', remove() { dialogoQuitado = true; },
+    });
+    const aviso = Object.assign(el(), {
+      tagName: 'YTD-ENFORCEMENT-MESSAGE-VIEW-MODEL',
+      closest: (sel) => (sel.includes('paper-dialog') ? dialogo : null),
+      // si alguien intentara pulsar los botones del aviso, se contabiliza
+      querySelector: () => Object.assign(el(), { click() { clics++; } }),
+    });
+    const backdrop = Object.assign(el(), { remove() { backdropQuitado = true; } });
+    const video = Object.assign(el(), {
+      paused: true, readyState: 4, muted: false, playbackRate: 1,
+      play() { play++; return Promise.resolve(); },
+    });
+    global.document.querySelector = (sel) => {
+      if (sel.includes('enforcement-message')) return aviso;
+      if (sel.includes('video')) return video;
+      return null;
+    };
+    global.document.querySelectorAll = (sel) =>
+      (sel.includes('iron-overlay-backdrop') ? [backdrop] : []);
+    global.document.documentElement.style = { removeProperty() {} };
+    global.document.body.style = { removeProperty() {} };
+
+    timers.forEach(f => f());
+    const ok = dialogoQuitado && backdropQuitado && play === 1 && clics === 0;
+    console.log((ok ? 'OK  ' : 'FALLO') +
+      '  aviso anti-adblock: dialogo fuera, video reanudado, sin pulsar botones');
+    if (!ok) process.exit(1);
+
+    // YouTube vuelve a pausar tras quitar el dialogo: se insiste unos segundos
+    // aunque el aviso ya no este en el DOM.
+    global.document.querySelector = (sel) =>
+      (sel.includes('enforcement-message') ? null : (sel.includes('video') ? video : null));
+    timers.forEach(f => f());
+    const ok2 = play === 2;
+    console.log((ok2 ? 'OK  ' : 'FALLO') +
+      '  tras el aviso se reanuda aunque YouTube vuelva a pausar');
+    if (!ok2) process.exit(1);
+
+    // ...pero si el usuario pausa el, se le respeta y no se insiste mas.
+    listeners['pointerdown']({ isTrusted: true });
+    timers.forEach(f => f());
+    timers.forEach(f => f());
+    const ok3 = play === 2;
+    console.log((ok3 ? 'OK  ' : 'FALLO') +
+      '  si el usuario pausa despues del aviso, no se le lleva la contraria');
+    if (!ok3) process.exit(1);
+
+    // Restaurar los stubs para los casos de fetch de abajo.
+    global.document.querySelector = () => null;
+    global.document.querySelectorAll = () => [];
+  }
 
   // La poda de fetch: /player y /get_watch pierden los anuncios (esten al
   // nivel que esten) y conservan el video; ad_break y las URLs ajenas pasan

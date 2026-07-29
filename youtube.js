@@ -230,6 +230,64 @@
     if (visible(close)) close.click();
   }
 
+  // ── Aviso "el reproductor se bloqueará" ───────────────────────────────────
+  // YouTube detecta el bloqueo y planta un diálogo modal que pausa el vídeo
+  // (medido en vivo 2026-07: ytd-enforcement-message-view-model dentro de un
+  // tp-yt-paper-dialog, con backdrop; el <video> conserva su src y readyState 4,
+  // así que solo está pausado).
+  //
+  // Se retira el diálogo y se reanuda lo que el usuario había puesto. NO se
+  // pulsa ninguno de sus botones —ni "Permitir anuncios" ni "Probar Premium"—:
+  // esas son decisiones suyas, igual que con los banners de cookies.
+  const ENFORCE_SELECTOR = 'ytd-enforcement-message-view-model,yt-playability-error-supported-renderers';
+
+  // Quitar el diálogo no basta: YouTube deja el vídeo pausado (verificado en
+  // vivo: readyState 4 y 36 s ya en buffer, pero paused). Hay que reanudarlo
+  // durante unos segundos — y dejar de insistir en cuanto el usuario toque
+  // algo, para no pelearse con su propia pausa.
+  let avisoRetiradoEn = 0;
+  let ultimoGestoUsuario = 0;
+
+  for (const t of ['pointerdown', 'keydown']) {
+    window.addEventListener(t, (e) => {
+      if (e.isTrusted) ultimoGestoUsuario = Date.now();
+    }, true);
+  }
+
+  function clearEnforcement() {
+    if (!ytEnabled) return;
+
+    let aviso = null;
+    try { aviso = document.querySelector(ENFORCE_SELECTOR); } catch (_) {}
+
+    if (aviso) {
+      const dialogo = aviso.closest('tp-yt-paper-dialog,ytd-popup-container') || aviso;
+      try { dialogo.remove(); } catch (_) {}
+      for (const b of document.querySelectorAll('tp-yt-iron-overlay-backdrop')) {
+        try { b.remove(); } catch (_) {}
+      }
+      // El modal deja el scroll bloqueado en <html>.
+      try {
+        document.documentElement.style.removeProperty('overflow');
+        if (document.body) document.body.style.removeProperty('overflow');
+      } catch (_) {}
+      avisoRetiradoEn = Date.now();
+    }
+
+    if (!avisoRetiradoEn) return;
+    const desde = Date.now() - avisoRetiradoEn;
+    if (desde > 10000) { avisoRetiradoEn = 0; return; }
+    // Si el usuario ha tocado algo después del aviso, manda él. El >= importa:
+    // con gesto y aviso en el mismo milisegundo, gana el usuario.
+    if (ultimoGestoUsuario >= avisoRetiradoEn) { avisoRetiradoEn = 0; return; }
+
+    const video = document.querySelector('video.html5-main-video') ||
+                  document.querySelector('video');
+    if (video && video.paused && video.readyState >= 2 && !adIsShowing()) {
+      video.play().catch(() => {});
+    }
+  }
+
   // ── Limpieza de nodos de anuncio ──────────────────────────────────────────
   function removeAdNodes(root) {
     if (!ytEnabled || !root || !root.querySelectorAll) return;
@@ -279,7 +337,7 @@
   // ── Arranque ──────────────────────────────────────────────────────────────
   function start() {
     removeAdNodes(document.documentElement);
-    setInterval(skipAd, 200);
+    setInterval(() => { skipAd(); clearEnforcement(); }, 200);
   }
 
   if (document.readyState === 'loading') {

@@ -24,6 +24,39 @@ Los buscadores rotan las clases de sus anuncios y cambian dónde los colocan
 no se detectan por clase sino por **la etiqueta visible** —«Resultados
 patrocinados», «Sponsored», «Anuncio»—, que es lo único que no pueden quitar.
 
+### Qué NO se toca nunca
+
+Un bloqueador que se lleva por delante un botón o un panel de ajustes molesta
+más que los anuncios. Las reglas que lo evitan, todas comprobadas navegando de
+verdad:
+
+- **Lo que abres tú.** Si acabas de hacer clic, lo que aparezca en el segundo
+  siguiente es asunto tuyo: no se oculta. Y si trae interruptores por finalidad
+  (un panel de preferencias), se respeta ya para siempre.
+- **Botones que no son `<button>`.** Media web moderna hace los botones con un
+  `<div>`. Antes esos clics no contaban como intención y su ventana emergente
+  —el `popup` de OAuth, el de configuración— salía bloqueada. Ahora también
+  cuenta el control hecho a mano; la trampa clásica (el `cursor:pointer` puesto
+  sobre una capa a pantalla completa o sobre el `body`) sigue sin contar.
+- **Descargas que pides.** El botón «Exportar» que crea un `<a download>` o un
+  `blob:` al vuelo funciona; el pop-under que crea un `<a target="_blank">`
+  hacia otro dominio, no.
+- **Diálogos.** Un modal solo se toma por banner de cookies si menciona cookies
+  de forma explícita **y** habla de aceptar, rechazar o configurar. Un modal de
+  registro que enlaza la política de privacidad no cumple eso, y por eso ya no
+  desaparece.
+- **Dentro de un iframe no se oculta ningún banner.** El aviso de un CMP suele
+  vivir en su propio iframe: vaciarlo desde dentro deja el iframe a pantalla
+  completa pero en blanco, con el velo del sitio puesto y el scroll bloqueado —
+  la página queda inservible, ni se lee ni se puede responder. Verificado así en
+  `as.com`. Los banners solo se ocultan desde el marco superior, escondiendo el
+  iframe entero; si desde ahí no se reconoce, se deja intacto a propósito.
+
+Y si algún día quieres responder al aviso, el popup tiene **Aviso de cookies →
+MOSTRAR**: lo devuelve a la página tal cual estaba. Hay sitios (Marca, sin ir
+más lejos) donde el único acceso a «Configuración de cookies» vive dentro del
+propio banner, así que ocultarlo dejaba sin salida.
+
 ### Clientes de correo
 
 En Gmail, Outlook, Proton y cualquier host tipo `mail.*` o `webmail.*`, la capa
@@ -51,6 +84,12 @@ Tres capas, medidas contra el YouTube real:
    persisten ocultos al terminar el anuncio.
 3. **Cosmética**: los renderers de anuncio del feed y la búsqueda se eliminan
    del DOM y se cubren por CSS.
+4. **El aviso «el reproductor se bloqueará»**: YouTube detecta el bloqueo y
+   planta un modal que pausa el vídeo (el `<video>` conserva su `src`: solo
+   está pausado). Se retira el diálogo y se reanuda lo que estabas viendo,
+   dejando de insistir en cuanto tocas algo — si la pausa la das tú, manda tu
+   pausa. **No se pulsa ninguno de sus botones**: ni «Permitir anuncios» ni
+   «Probar Premium». Esas son decisiones tuyas.
 
 ### Anti-redirección
 
@@ -74,6 +113,8 @@ cubre bloqueando en red los dominios de las redes de redirección (incluido
 
 - **ON/OFF** — pausa global; al pausar se restaura la página, no hace falta recargar.
 - **Este sitio** — excluye el dominio actual, también a nivel de red.
+- **Aviso de cookies · MOSTRAR** — devuelve a la página el banner que se ocultó,
+  por si quieres responderlo.
 - **Anuncios YouTube** · **Anti-redirección** · **Descargas vigiladas** — cada capa por separado.
 
 ## Qué NO hace
@@ -86,10 +127,13 @@ de pago. Bloquear anuncios y evadir una suscripción no son lo mismo.
     node tests/smoke.js
     node tests/smoke_yt.js
     node tests/smoke_guard.js
+    node tests/smoke_cookies.js
 
 Sin dependencias: arrancan cada script con stubs mínimos del navegador y
 comprueban la política de bloqueo. `smoke_guard.js` verifica en concreto que un
-enlace normal sigue funcionando y que un pop-under no.
+enlace normal —y un botón hecho con `<div>`— siguen funcionando y que un
+pop-under no; `smoke_cookies.js`, que lo que abres tú no se oculta y que dentro
+de un iframe no se toca nada.
 
 ## Privacidad
 

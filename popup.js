@@ -216,6 +216,24 @@ pickBtn.addEventListener('click', () => {
   });
 });
 
+// ── Volver a mostrar el aviso de cookies ─────────────────────────────────────
+// Hay sitios (Marca, por ejemplo) donde el único acceso a "Configuración de
+// cookies" vive DENTRO del propio banner: al ocultarlo, el usuario se queda sin
+// forma de responder si algún día quiere. Esto se lo devuelve, sin que ShieldX
+// decida nada por él.
+const cookieShowBtn = el('cookieShowBtn');
+const cookieDesc    = el('cookieDesc');
+
+cookieShowBtn.addEventListener('click', () => {
+  if (currentTabId === null) return;
+  chrome.tabs.sendMessage(currentTabId, { type: 'COOKIE_SHOW' }, (resp) => {
+    void chrome.runtime.lastError;
+    cookieDesc.textContent = (resp && resp.restaurados)
+      ? 'Aviso restaurado en la página'
+      : 'No había ningún aviso oculto aquí';
+  });
+});
+
 customRestoreBtn.addEventListener('click', () => {
   chrome.storage.local.get(['customHidden'], (d) => {
     const map = d.customHidden && typeof d.customHidden === 'object' ? d.customHidden : {};
