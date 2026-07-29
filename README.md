@@ -33,6 +33,16 @@ verdad:
 - **Lo que abres tú.** Si acabas de hacer clic, lo que aparezca en el segundo
   siguiente es asunto tuyo: no se oculta. Y si trae interruptores por finalidad
   (un panel de preferencias), se respeta ya para siempre.
+- **Ventanas que tardan en abrirse.** Una pasarela de pago o un inicio de
+  sesión con Google abren su ventana *después* de hablar con el servidor. Si
+  pulsaste un enlace o un botón de verdad, hay 5 segundos de margen; si sólo
+  pulsaste algo que *parecía* un botón (un `<div>` con el cursor de mano), 1,5.
+  Al pop-under no le sirve de nada: dispara en el mismo instante del clic y
+  sigue limitado a una ventana por gesto.
+- **El «play» de una web de streaming no es un botón.** Es un `<div>` enorme
+  con cursor de mano encima del reproductor, y es la puerta de entrada del
+  pop-under: si el elemento con cursor de mano contiene un vídeo, o pasa de un
+  cuarto de la pantalla, no cuenta como intención de abrir nada.
 - **Botones que no son `<button>`.** Media web moderna hace los botones con un
   `<div>`. Antes esos clics no contaban como intención y su ventana emergente
   —el `popup` de OAuth, el de configuración— salía bloqueada. Ahora también
@@ -127,19 +137,29 @@ cubre bloqueando en red los dominios de las redes de redirección (incluido
 No se salta muros de pago de prensa ni ningún otro control de acceso a contenido
 de pago. Bloquear anuncios y evadir una suscripción no son lo mismo.
 
+Tampoco toca los resultados patrocinados de **Google Maps**. Sus fichas no usan
+la estructura de los resultados de búsqueda, y para ocultarlas habría que
+adivinar el contenedor: si se falla, desaparece la lista entera. Preferimos
+dejar un par de hoteles patrocinados a riesgo de romperle el mapa a nadie.
+
+Y al **pausar** se restaura lo que estaba oculto, pero no vuelve lo que se
+eliminó del documento (scripts de redes publicitarias, imágenes de banner,
+capas que robaban el clic). Para eso hace falta recargar.
+
 ## Pruebas
 
-    node tests/run.js        # toda la batería: 227 comprobaciones, 9 ficheros
+    node tests/run.js        # toda la batería: 272 comprobaciones, 10 ficheros
 
 o cada una por separado:
 
     node tests/smoke.js            # dónde entra la capa de ocultado
-    node tests/smoke_arranque.js   # el observer se crea pase lo que pase
+    node tests/smoke_arranque.js   # arranque, document.write, pausar/reanudar
     node tests/smoke_hide.js       # qué se oculta y qué NO
     node tests/smoke_cookies.js    # banners, y lo que abres tú
     node tests/smoke_guard.js      # qué ventanas se permiten
     node tests/smoke_picker.js     # el picker y sus tres salidas
     node tests/smoke_yt.js         # YouTube
+    node tests/smoke_popup.js      # interruptores y estado del popup
     node tests/smoke_background.js # descargas, contadores, exclusión
     node tests/smoke_rules.js      # manifest y reglas de red
 

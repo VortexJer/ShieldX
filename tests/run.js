@@ -10,6 +10,7 @@ const suites = [
   ['smoke_guard.js',      'anti pop-under: que ventanas se permiten'],
   ['smoke_picker.js',     'picker: entrada, salidas y selectores'],
   ['smoke_yt.js',         'YouTube: poda, salto y aviso anti-adblock'],
+  ['smoke_popup.js',      'popup: interruptores, estado y correo'],
   ['smoke_background.js', 'service worker: descargas, contadores, exclusion'],
   ['smoke_rules.js',      'integridad de manifest y reglas de red'],
 ];

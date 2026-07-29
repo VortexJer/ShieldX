@@ -19,10 +19,15 @@ function comprobar(desc, ok) {
 function nodo(o) {
   o = o || {};
   const a = {};
+  const est = {};
   const el = {
+    estilos: est,
     tagName: o.tag || 'DIV', id: o.id || '', className: o.cls || '', classList: [],
     textContent: o.texto || '', children: [], parentElement: null,
-    style: { setProperty() {}, removeProperty() {} },
+    style: {
+      setProperty(k, v) { est[k] = v; },
+      removeProperty(k) { delete est[k]; },
+    },
     setAttribute(k, v) { a[k] = String(v); }, getAttribute: (k) => (k in a ? a[k] : null),
     hasAttribute: (k) => k in a, removeAttribute(k) { delete a[k]; },
     remove() {}, append() {}, appendChild() {}, focus() {}, blur() {},
@@ -42,6 +47,7 @@ function arrancar({ sincrono, romper, oculta }) {
   let cssPuesto = false;
   let arranqueLanzo = null;
   let observerCb = null;
+  let observaDocument = false;
   const extra = [];   // anuncios que llegan despues, por mutacion
 
   global.document = {
@@ -60,8 +66,17 @@ function arrancar({ sincrono, romper, oculta }) {
     get visibilityState() { return oculta ? 'hidden' : 'visible'; },
     elementFromPoint: () => { if (romper === 'overlays') throw new Error('overlay explota'); return null; },
   };
-  documentElement.appendChild = (n) => { if (n && n.id === 'shieldx-css') cssPuesto = true; };
+  // La hoja de estilo se modela de verdad: se puede poner Y quitar.
+  let hoja = null;
+  documentElement.appendChild = (n) => {
+    if (n && n.id === 'shieldx-css') {
+      cssPuesto = true;
+      hoja = n;
+      n.remove = () => { cssPuesto = false; hoja = null; };
+    }
+  };
   global.document.head.appendChild = documentElement.appendChild;
+  global.document.getElementById = (id) => (id === 'shieldx-css' ? hoja : null);
 
   global.window = {
     location: { hostname: 'www.ejemplo.es' }, innerWidth: 1280, innerHeight: 800,
@@ -75,7 +90,12 @@ function arrancar({ sincrono, romper, oculta }) {
   global.CustomEvent = class { constructor(t, o) { this.type = t; Object.assign(this, o); } };
   global.MutationObserver = class {
     constructor(cb) { observerCb = cb; }
-    observe() { observerCreado = true; }
+    observe(diana) {
+      observerCreado = true;
+      // `document` no cambia nunca; `document.documentElement` si, con
+      // document.write. Se anota cual eligio.
+      observaDocument = diana === global.document;
+    }
     disconnect() {}
   };
   global.getComputedStyle = () => ({ position: 'static', overflow: 'visible', cursor: 'auto', display: 'block' });
@@ -83,14 +103,20 @@ function arrancar({ sincrono, romper, oculta }) {
 
   const estado = { enabled: true, ytAdBlock: true, guardEnabled: true, siteExcluded: [] };
   let cbGuardado = null;
+  let onChangedCb = null;
   global.chrome = {
     runtime: { id: 't', sendMessage() {}, lastError: null, onMessage: { addListener() {} } },
     storage: {
       local: {
-        get: (k, cb) => { if (sincrono) cb(estado); else if (!cbGuardado) cbGuardado = cb; },
+        get: (k, cb) => {
+          // El primero es el del arranque; los siguientes vienen de onChanged y
+          // deben responder ya con el estado actual.
+          if (sincrono || cbGuardado) cb(estado);
+          else cbGuardado = cb;
+        },
         set() {},
       },
-      onChanged: { addListener() {} },
+      onChanged: { addListener(f) { onChangedCb = f; } },
     },
   };
 
@@ -105,8 +131,33 @@ function arrancar({ sincrono, romper, oculta }) {
   return {
     get observerCreado() { return observerCreado; },
     get cssPuesto() { return cssPuesto; },
+    get observaDocument() { return observaDocument; },
+    // document.write: <html> nuevo y la hoja de estilo se va con el viejo.
+    reescribirDocumento() {
+      cssPuesto = false;
+      const nuevoHtml = nodo({ tag: 'HTML' });
+      nuevoHtml.appendChild = documentElement.appendChild;
+      global.document.documentElement = nuevoHtml;
+      global.document.body = nodo({ tag: 'BODY' });
+      global.document.head = nodo({ tag: 'HEAD' });
+      global.document.head.appendChild = documentElement.appendChild;
+      hoja = null;                    // la hoja se fue con el documento viejo
+    },
     anuncio, arranqueLanzo,
     listo: () => new Promise(r => setTimeout(r, 0)),
+    // El popup escribe en storage y el content script reacciona por onChanged.
+    cambiarEstado(parche) {
+      Object.assign(estado, parche);
+      // querySelectorAll('[data-sx="1"]') / ('[data-sx="0"]') para restaurar
+      const conMarca = (v) => [anuncio, ...extra].filter(n => n.getAttribute('data-sx') === v);
+      const qsaOriginal = global.document.querySelectorAll;
+      global.document.querySelectorAll = function (q) {
+        if (q === '[data-sx="1"]') return conMarca('1');
+        if (q === '[data-sx="0"]') return conMarca('0');
+        return qsaOriginal.call(this, q);
+      };
+      if (onChangedCb) onChangedCb({ enabled: {} }, 'local');
+    },
     // Simula que llega un anuncio nuevo y avisa al observer, como haria el DOM.
     mutar() {
       const n = nodo({ cls: 'ads', id: 'tardio' });
@@ -166,6 +217,40 @@ async function arrancarYEsperar(op) {
   await new Promise(res => setTimeout(res, 400));
   comprobar('con la pestana oculta el barrido sigue corriendo tras una mutacion',
     nuevo.getAttribute('data-sx') === '1');
+
+  // ── e) la pagina se reescribe entera (document.write) ─────────────────────
+  // Las webs de descarga y streaming montan la pagina asi. El <html> pasa a ser
+  // OTRO nodo: un observer atado al antiguo se queda ciego y la hoja de estilo
+  // inyectada desaparece con el documento viejo.
+  r = await arrancarYEsperar({ sincrono: false });
+  comprobar('el observer se ata a `document`, no al <html> (sobrevive a document.write)',
+    r.observaDocument === true);
+
+  r.reescribirDocumento();
+  const tardio = r.mutar();
+  await new Promise(res => setTimeout(res, 400));
+  comprobar('tras document.write se repone la hoja de estilo', r.cssPuesto === true);
+  comprobar('tras document.write se siguen ocultando anuncios',
+    tardio.getAttribute('data-sx') === '1');
+
+  // ── f) pausar y reanudar sin recargar ─────────────────────────────────────
+  r = await arrancarYEsperar({ sincrono: false });
+  comprobar('antes de pausar, el anuncio esta oculto',
+    r.anuncio.getAttribute('data-sx') === '1');
+
+  r.cambiarEstado({ enabled: false });
+  await new Promise(res => setTimeout(res, 30));
+  comprobar('al pausar se retira la marca del anuncio',
+    r.anuncio.getAttribute('data-sx') === null);
+  comprobar('al pausar se quitan los estilos de ocultado',
+    r.anuncio.estilos.display === undefined);
+  comprobar('al pausar se retira la hoja de estilo', r.cssPuesto === false);
+
+  r.cambiarEstado({ enabled: true });
+  await new Promise(res => setTimeout(res, 30));
+  comprobar('al reanudar se vuelve a inyectar el CSS', r.cssPuesto === true);
+  comprobar('y el anuncio se oculta otra vez',
+    r.anuncio.getAttribute('data-sx') === '1');
 
   console.log(fallos === 0 ? '\nTodo correcto' : `\n${fallos} fallo(s)`);
   process.exit(fallos === 0 ? 0 : 1);

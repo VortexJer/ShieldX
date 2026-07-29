@@ -66,34 +66,51 @@
         root = root.parentElement;
       }
       if (root === document.body || root === document.documentElement) return false;
+
+      // El "play" de las webs de streaming es un div a tamaño del reproductor
+      // con cursor pointer: si eso contara como botón, el pop-under entraría
+      // por la puerta grande. Un control de verdad no lleva un vídeo dentro.
+      if (root.querySelector && root.querySelector('video,iframe,embed,object')) return false;
+
       const r = root.getBoundingClientRect();
       const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
-      return r.width * r.height < vw * vh * 0.5;
+      // Un cuarto de pantalla ya es enorme para un botón (320x200 en 1280x800).
+      return r.width * r.height < vw * vh * 0.25;
     } catch (_) { return false; }
   }
 
-  function gestureLooksLegit() {
+  // 0 = no fue sobre nada pulsable · 1 = heurística de cursor · 2 = control real
+  function gestureStrength() {
     // El camino compuesto atraviesa las fronteras de shadow DOM, que es
     // justo donde closest() se detiene.
     if (gesturePath) {
       for (let i = 0; i < gesturePath.length && i < 40; i++) {
         const n = gesturePath[i];
         if (!n || n.nodeType !== 1 || !n.matches) continue;
-        try { if (n.matches(LEGIT_QUERY)) return true; } catch (_) {}
+        try { if (n.matches(LEGIT_QUERY)) return 2; } catch (_) {}
       }
     }
-    if (!gestureTarget || !gestureTarget.closest) return false;
-    if (gestureTarget.closest(LEGIT_QUERY)) return true;
-    return pointerRootIsControl(gestureTarget);
+    if (!gestureTarget || !gestureTarget.closest) return 0;
+    if (gestureTarget.closest(LEGIT_QUERY)) return 2;
+    return pointerRootIsControl(gestureTarget) ? 1 : 0;
   }
 
   // Un gesto sólo autoriza si es reciente Y cayó sobre algo pulsable. Que el
   // usuario haya hecho clic en el reproductor o en el fondo de la página no es
   // permiso para nada: ese clic es precisamente el que secuestran.
-  // 1,5 s de margen: los pop-ups de OAuth suelen abrirse tras un fetch.
+  //
+  // El margen depende de sobre qué se pulsó. Un <a>/<button> de verdad da 5 s:
+  // las pasarelas de pago y los inicios de sesión con Google abren su ventana
+  // DESPUÉS de hablar con el servidor, y con un margen corto el usuario ve que
+  // "no pasa nada" al pulsar. Un pop-under, en cambio, dispara en el acto y
+  // además sigue limitado a una ventana por gesto. Para la heurística del
+  // cursor (un div que parece botón) el margen se queda en 1,5 s.
+  const MARGEN = { 2: 5000, 1: 1500, 0: 0 };
+
   function gestureAuthorizes() {
-    if (Date.now() - lastGesture > 1500) return false;
-    return gestureLooksLegit();
+    const fuerza = gestureStrength();
+    if (!fuerza) return false;
+    return Date.now() - lastGesture <= MARGEN[fuerza];
   }
 
   function allowNewWindow() {

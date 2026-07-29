@@ -677,6 +677,11 @@ function paso(fn) {
 function runPasses() {
   scheduled = false;
   lastRun = performance.now();
+  // Una web puede reemplazar el documento entero con document.write (las de
+  // descarga y streaming lo hacen a menudo): se lleva por delante la hoja de
+  // estilo inyectada. Reponerla cuesta un getElementById por pasada.
+  paso(injectCSS);
+  paso(reponerCustomCSS);
   paso(sweep);
   paso(stripMetaRefresh);
   paso(skipCookies);
@@ -711,7 +716,10 @@ function start() {
   // vida de la página. Si se crea después de la primera pasada, cualquier
   // tropiezo en esa pasada deja la página sin vigilancia.
   observer = new MutationObserver(schedule);
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  // Se observa `document`, no `document.documentElement`: si la página se
+  // reescribe con document.write, el <html> es OTRO nodo y un observer atado al
+  // antiguo se queda ciego para siempre. `document` no cambia nunca.
+  observer.observe(document, { childList: true, subtree: true });
   runPasses();
 }
 
@@ -949,9 +957,20 @@ function reportCookie() {
 // se aplican por hoja de estilo, así que retirar la hoja lo restaura todo.
 const CUSTOM_CSS_ID = 'shieldx-custom-css';
 
+// Lo último que pidió el usuario, para poder reponerlo si la página se
+// reescribe entera y se lleva la hoja por delante.
+let ultimoCustomHidden = null;
+
+function reponerCustomCSS() {
+  if (!ultimoCustomHidden) return;
+  if (document.getElementById(CUSTOM_CSS_ID)) return;
+  applyCustomCSS(ultimoCustomHidden);
+}
+
 function applyCustomCSS(customHidden) {
   const old = document.getElementById(CUSTOM_CSS_ID);
   if (old) old.remove();
+  ultimoCustomHidden = customHidden || null;
   if (!globalEnabled || siteExcluded) return;
   const map = customHidden && typeof customHidden === 'object' ? customHidden : {};
   const sels = Array.isArray(map[HOST]) ? map[HOST].filter(s => typeof s === 'string') : [];

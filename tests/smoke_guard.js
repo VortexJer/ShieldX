@@ -235,7 +235,78 @@ let paso = false;
 try { formNormal.submit(); paso = true; } catch (_) {}
 comprobar('form normal (sin target=_blank) se envia siempre', paso === true);
 
-// 18. Con el guard apagado no se estorba a nadie.
+// 18. El "play" de las webs de streaming: un div del tamano del reproductor con
+//     cursor pointer y un <video> dentro. Es LA puerta del pop-under.
+const zonaPlay = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  querySelector: (sel) => (sel.includes('video') ? {} : null),
+  getBoundingClientRect: () => ({ width: 700, height: 400 }),
+});
+aperturasReales = 0;
+gesto(zonaPlay);
+r = global.window.open('https://porno-scam.example');
+comprobar('clic en el reproductor (div con video dentro) NO autoriza',
+  aperturasReales === 0 && !r.real);
+
+// 19. Un panel grande con pointer pero sin video tampoco: un boton no ocupa
+//     un cuarto de la pantalla.
+const panelGrande = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  getBoundingClientRect: () => ({ width: 800, height: 500 }),
+});
+gesto(panelGrande);
+r = global.window.open('https://porno-scam.example');
+comprobar('un "boton" de 800x500 no cuela como control', aperturasReales === 0 && !r.real);
+
+// 20. Y el boton grande de verdad ("DESCARGAR", 400x100) sigue valiendo.
+const botonGrande = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  getBoundingClientRect: () => ({ width: 400, height: 100 }),
+});
+gesto(botonGrande);
+r = global.window.open('https://destino-legitimo.example');
+comprobar('un boton grande de verdad (400x100) sigue autorizando',
+  aperturasReales === 1 && r.real === true);
+
+// 21. Margenes por tipo de gesto. Un <button> de verdad da 5 s (pasarelas de
+//     pago y OAuth abren su ventana despues de hablar con el servidor); la
+//     heuristica del cursor se queda en 1,5 s.
+const reloj = Date.now;
+let ahora = reloj();
+Date.now = () => ahora;
+
+aperturasReales = 0;
+gesto(boton);                       // gesto FUERTE
+ahora += 3000;                      // el servidor tarda 3 s
+r = global.window.open('https://pasarela-de-pago.example');
+comprobar('boton real: la ventana pasa aunque tarde 3 s',
+  aperturasReales === 1 && r.real === true);
+
+gesto(boton);
+ahora += 6000;                      // 6 s ya es demasiado
+r = global.window.open('https://tarde.example');
+comprobar('boton real: a los 6 s ya no autoriza', aperturasReales === 1 && !r.real);
+
+const divBoton2 = Object.assign(new global.HTMLElement(), {
+  closest: () => null, cursor: 'pointer', parentElement: null,
+  getBoundingClientRect: () => ({ width: 140, height: 44 }),
+});
+aperturasReales = 0;
+gesto(divBoton2);                   // gesto DEBIL (solo cursor pointer)
+ahora += 3000;
+r = global.window.open('https://scam.example');
+comprobar('div con pointer: a los 3 s ya no autoriza (margen corto)',
+  aperturasReales === 0 && !r.real);
+
+gesto(divBoton2);
+ahora += 500;
+r = global.window.open('https://destino.example');
+comprobar('div con pointer: dentro de 1,5 s si autoriza',
+  aperturasReales === 1 && r.real === true);
+
+Date.now = reloj;
+
+// 22. Con el guard apagado no se estorba a nadie.
 guardAttr = '0';
 aperturasReales = 0;
 r = global.window.open('https://lo-que-sea.example');
