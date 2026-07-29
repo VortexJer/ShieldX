@@ -14,6 +14,7 @@ para Chrome (Manifest V3).
 | DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, oculta banners de cookies (sin pulsar nada en nombre del usuario) y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
 | YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |
+| Muros | `content.js` | Retira los muros de «desactiva tu bloqueador» y devuelve el scroll — sin pulsar nada suyo |
 | Descargas | `background.js` | Pausa y pregunta cuando un fichero empieza a descargarse sin que lo hayas pedido |
 | UI | `popup.html` · `popup.js` | Interruptores, exclusión por sitio y contadores |
 
@@ -119,6 +120,41 @@ el script de primer nivel de la página no se puede interceptar ahí. Esa vía s
 cubre bloqueando en red los dominios de las redes de redirección (incluido
 `main_frame`) y retirando los `<meta http-equiv="refresh">` hacia otro dominio.
 
+### Muros de «desactiva tu bloqueador»
+
+No es lo mismo que un muro de pago: aquí no se pide dinero ni una cuenta, sólo
+tapan el contenido hasta que apagues el bloqueador. Se retira la capa (y su
+fondo oscuro) y se devuelve el scroll. **No se pulsa ningún botón suyo** ni se
+finge que el bloqueador no está.
+
+El listón es alto a propósito, y así se comprueba en las pruebas: tiene que
+mencionar bloqueadores de anuncios **y** pedirte que lo desactives, ser corto
+(un aviso, no un artículo que hable del tema) y además estar tapando la página
+o haber dejado el scroll bloqueado. Un muro de pago, un banner de cookies o un
+artículo sobre adblockers no cumplen eso y no se tocan. Se puede apagar desde
+el popup.
+
+## Atajos de teclado
+
+| Atajo | Qué hace |
+|---|---|
+| **Alt+Mayús+S** | Excluye —o reactiva— ShieldX en el sitio que estás viendo |
+| **Alt+Mayús+X** | Entra en modo «señalar» para ocultar un elemento |
+
+Se cambian en `chrome://extensions/shortcuts`, donde además puedes darle una
+tecla a «volver a mostrar el aviso de cookies», que viene sin asignar.
+
+## Tus ajustes
+
+El popup exporta todo lo que has configurado —interruptores, sitios excluidos y
+elementos que ocultaste a mano— a un fichero JSON, y lo vuelve a importar. Todo
+pasa dentro del navegador: no hay servidor ninguno. Al importar sólo se aceptan
+las claves conocidas y con el tipo correcto, así que un fichero manipulado no
+puede colar nada raro en el almacenamiento.
+
+La lista de sitios excluidos también se ve entera en el popup, con un botón para
+reactivar cada uno; antes había que volver a visitar el sitio para quitarlo.
+
 ## Instalación
 
 1. `chrome://extensions` → activar **Modo desarrollador**.
@@ -148,7 +184,7 @@ capas que robaban el clic). Para eso hace falta recargar.
 
 ## Pruebas
 
-    node tests/run.js        # toda la batería: 272 comprobaciones, 10 ficheros
+    node tests/run.js        # toda la batería: 346 comprobaciones, 13 ficheros
 
 o cada una por separado:
 
@@ -156,11 +192,14 @@ o cada una por separado:
     node tests/smoke_arranque.js   # arranque, document.write, pausar/reanudar
     node tests/smoke_hide.js       # qué se oculta y qué NO
     node tests/smoke_cookies.js    # banners, y lo que abres tú
+    node tests/smoke_muros.js      # muros de «desactiva el bloqueador»
     node tests/smoke_guard.js      # qué ventanas se permiten
     node tests/smoke_picker.js     # el picker y sus tres salidas
+    node tests/smoke_selector.js   # los selectores que genera el picker
+    node tests/smoke_buscador.js   # resultados patrocinados y meta-refresh
     node tests/smoke_yt.js         # YouTube
-    node tests/smoke_popup.js      # interruptores y estado del popup
-    node tests/smoke_background.js # descargas, contadores, exclusión
+    node tests/smoke_popup.js      # popup: interruptores, exportar/importar
+    node tests/smoke_background.js # descargas, atajos, contadores, exclusión
     node tests/smoke_rules.js      # manifest y reglas de red
 
 Sin dependencias: arrancan cada script con stubs mínimos del navegador y

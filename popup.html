@@ -420,6 +420,61 @@
     </div>
   </div>
 
+  <!-- Muro anti-bloqueador -->
+  <div class="yt-section">
+    <div class="yt-l">
+      <span class="yt-ico"><svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 2.4v3.9c0 3.5-2.3 5.8-5.4 6.6-3.1-.8-5.4-3.1-5.4-6.6V4.2L8 1.8z"/><path d="M5.8 8.1l1.6 1.6 3-3.2"/></svg></span>
+      <div class="yt-info">
+        <span class="yt-name">Muros «desactiva el bloqueador»</span>
+        <span class="yt-desc">Retira la capa y devuelve el scroll, sin pulsar nada</span>
+      </div>
+    </div>
+    <div class="yt-r">
+      <span class="yt-status on" id="aabStatus">ACTIVO</span>
+      <label class="tgl">
+        <input type="checkbox" id="aabToggle" checked>
+        <div class="tgl-track"><div class="tgl-thumb"></div></div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Sitios excluidos -->
+  <div class="cov-section" id="excludedBox" style="display:none">
+    <div class="sec-title">Sitios donde no actúa <span id="excludedCount"></span></div>
+    <div class="cov-list" id="excludedList"></div>
+  </div>
+
+  <!-- Ajustes -->
+  <div class="yt-section">
+    <div class="yt-l">
+      <span class="yt-ico"><svg viewBox="0 0 16 16"><path d="M2.5 11.5h11M2.5 8h11M2.5 4.5h11"/></svg></span>
+      <div class="yt-info">
+        <span class="yt-name">Tus ajustes</span>
+        <span class="yt-desc" id="settingsDesc">Guárdalos en un fichero o recupéralos</span>
+      </div>
+    </div>
+    <div class="yt-r">
+      <button class="reset-btn" id="importBtn">IMPORTAR</button>
+      <button class="reset-btn" id="exportBtn">EXPORTAR</button>
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none">
+    </div>
+  </div>
+
+  <!-- Atajos -->
+  <div class="cov-section">
+    <div class="sec-title">Atajos de teclado</div>
+    <div class="cov-list">
+      <div class="cov-item">
+        <div class="cov-l"><span class="cov-name">Excluir o reactivar este sitio</span></div>
+        <span class="badge">ALT+MAYÚS+S</span>
+      </div>
+      <div class="cov-item">
+        <div class="cov-l"><span class="cov-name">Señalar un elemento</span></div>
+        <span class="badge">ALT+MAYÚS+X</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Footer -->
   <div class="footer">
     <span class="ft-text">USO PERSONAL · SIN SERVIDORES EXTERNOS</span>

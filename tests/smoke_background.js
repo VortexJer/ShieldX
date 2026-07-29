@@ -18,6 +18,8 @@ const acciones = [];          // registro de todo lo que se le hace a una descar
 let sesionRules = [];
 let notificacionSiguiente = 'n1';
 let badge = {};
+const aPestana = [];      // mensajes enviados a la pestaña
+let recargada = null;
 
 function on(nombre) {
   return { addListener(f) { (oyentes[nombre] = oyentes[nombre] || []).push(f); } };
@@ -43,7 +45,12 @@ global.chrome = {
     onChanged: { addListener() {} },
   },
   contextMenus: { create(o, cb) { if (cb) cb(); }, onClicked: on('menu') },
-  tabs: { sendMessage() {}, onUpdated: on('tabUpdated'), onRemoved: on('tabRemoved') },
+  commands: { onCommand: on('command') },
+  tabs: {
+    sendMessage(id, msg, cb) { aPestana.push([id, msg]); if (cb) cb(); },
+    reload(id) { recargada = id; },
+    onUpdated: on('tabUpdated'), onRemoved: on('tabRemoved'),
+  },
   action: {
     setBadgeText(o) { badge = o; },
     setBadgeBackgroundColor() {},
@@ -213,6 +220,67 @@ const descarga = (extra) => Object.assign({
   mensaje({ type: 'SET_SITE', host: 'x.es', excluded: 'si' }, 1, () => {});
   await dormir(10);
   comprobar('SET_SITE con datos invalidos no hace nada', sesionRules.length === 0);
+
+  // ── Atajos de teclado ─────────────────────────────────────────────────────
+  const pestana = { id: 7, url: 'https://www.ejemplo.es/una/pagina' };
+
+  store.siteExcluded = [];
+  aPestana.length = 0; acciones.length = 0; recargada = null;
+  disparar('command', 'sx-toggle-site', pestana);
+  await dormir(20);
+  comprobar('Alt+Shift+S excluye el sitio actual',
+    JSON.stringify(store.siteExcluded) === JSON.stringify(['ejemplo.es']));
+  comprobar('y levanta la regla de red', sesionRules.length === 1);
+  comprobar('y avisa de lo que ha hecho',
+    acciones.some(a => a[0] === 'notificar' && a[1] === 'ShieldX'));
+  comprobar('y recarga la pestana para que se note', recargada === 7);
+
+  disparar('command', 'sx-toggle-site', pestana);
+  await dormir(20);
+  comprobar('pulsarlo otra vez lo reactiva',
+    JSON.stringify(store.siteExcluded) === JSON.stringify([]));
+  comprobar('y retira la regla de red', sesionRules.length === 0);
+
+  aPestana.length = 0;
+  disparar('command', 'sx-pick', pestana);
+  comprobar('Alt+Shift+X arranca el modo senalar',
+    aPestana.some(([id, m]) => id === 7 && m.type === 'PICK_START'));
+
+  aPestana.length = 0;
+  disparar('command', 'sx-cookie-show', pestana);
+  comprobar('el atajo de cookies pide mostrar el aviso',
+    aPestana.some(([id, m]) => id === 7 && m.type === 'COOKIE_SHOW'));
+
+  // En paginas que no son la web de verdad no hay sitio que excluir.
+  const antesLista = JSON.stringify(store.siteExcluded);
+  for (const u of ['chrome://extensions/', 'chrome-extension://abc/x.html',
+                   'file:///C:/x.html', 'about:blank', 'data:text/html,x']) {
+    disparar('command', 'sx-toggle-site', { id: 8, url: u });
+  }
+  await dormir(20);
+  comprobar('en paginas internas / file: / data: el atajo no toca nada',
+    JSON.stringify(store.siteExcluded) === antesLista);
+
+  // Sin pestana no puede pasar nada raro.
+  let exploto = false;
+  try { disparar('command', 'sx-toggle-site', null); } catch (_) { exploto = true; }
+  comprobar('un atajo sin pestana no lanza', !exploto);
+
+  // ── SYNC_RULES (lo manda el popup al importar ajustes) ────────────────────
+  store.siteExcluded = ['importado.es', 'otro.com'];
+  sesionRules = [];
+  mensaje({ type: 'SYNC_RULES' }, 1);
+  await dormir(20);
+  comprobar('SYNC_RULES levanta las reglas de los sitios importados',
+    sesionRules.length === 2);
+
+  // ── antiAdblockWalls viaja en las estadisticas ────────────────────────────
+  let stats = null;
+  store.antiAdblockWalls = false;
+  mensaje({ type: 'GET_STATS', tabId: 1 }, 1, (r) => { stats = r; });
+  await dormir(20);
+  comprobar('GET_STATS informa del interruptor de los muros',
+    stats && stats.antiAdblockWalls === false);
 
   console.log(fallos === 0 ? '\nTodo correcto' : `\n${fallos} fallo(s)`);
   process.exit(fallos === 0 ? 0 : 1);

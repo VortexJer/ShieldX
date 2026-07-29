@@ -33,6 +33,18 @@ const redirectCount = el('redirectCount');
 const pickBtn          = el('pickBtn');
 const customRestoreBtn = el('customRestoreBtn');
 const customCount      = el('customCount');
+// Todas las referencias se cogen AQUÍ, antes de nada. refresh() se llama desde
+// el callback de chrome.tabs.query, y si una const suya está declarada más
+// abajo salta un ReferenceError que deja el popup en blanco al abrirlo.
+const aabToggle        = el('aabToggle');
+const aabStatus        = el('aabStatus');
+const excludedBox      = el('excludedBox');
+const excludedList     = el('excludedList');
+const excludedCount    = el('excludedCount');
+const exportBtn        = el('exportBtn');
+const importBtn        = el('importBtn');
+const importFile       = el('importFile');
+const settingsDesc     = el('settingsDesc');
 
 let currentTabId = null;
 let currentHost  = '';
@@ -114,6 +126,8 @@ function refresh() {
     updateYTUI(res.ytAdBlock);
     updateSwitchUI(guardToggle, guardStatus, res.guardEnabled);
     updateSwitchUI(dlToggle,    dlStatus,    res.downloadGuard);
+    updateSwitchUI(aabToggle,   aabStatus,   res.antiAdblockWalls);
+    pintarExcluidos(res.siteExcluded || []);
     animateNumber(totalCount,    res.blockedTotal);
     animateNumber(sessionCount,  res.pageCount);
     animateNumber(cookieCount,   res.cookiesBlocked);
@@ -263,6 +277,126 @@ resetBtn.addEventListener('click', () => {
     animateNumber(cookieCount,   0);
     animateNumber(redirectCount, 0);
   });
+});
+
+// ── Muros de "desactiva el bloqueador" ───────────────────────────────────────
+aabToggle.addEventListener('change', () => {
+  const on = aabToggle.checked;
+  chrome.storage.local.set({ antiAdblockWalls: on });
+  updateSwitchUI(aabToggle, aabStatus, on);
+});
+
+// ── Sitios excluidos: verlos y quitarlos de uno en uno ───────────────────────
+// Antes, para reactivar un sitio había que volver a visitarlo. Aquí está la
+// lista entera con su botón al lado.
+function pintarExcluidos(lista) {
+  excludedList.textContent = '';   // sin innerHTML: la CSP del popup lo agradece
+  if (!lista.length) { excludedBox.style.display = 'none'; return; }
+
+  excludedBox.style.display = '';
+  excludedCount.textContent = '(' + lista.length + ')';
+
+  for (const host of lista.slice().sort()) {
+    const fila = document.createElement('div');
+    fila.className = 'cov-item';
+
+    const izq = document.createElement('div');
+    izq.className = 'cov-l';
+    const nombre = document.createElement('span');
+    nombre.className = 'cov-name';
+    nombre.textContent = host;
+    izq.appendChild(nombre);
+
+    const quitar = document.createElement('button');
+    quitar.className = 'reset-btn';
+    quitar.textContent = 'REACTIVAR';
+    quitar.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'SET_SITE', host, excluded: false }, (res) => {
+        void chrome.runtime.lastError;
+        pintarExcluidos((res && res.siteExcluded) || []);
+        if (host === currentHost) updateSiteUI(true);
+      });
+    });
+
+    fila.append(izq, quitar);
+    excludedList.appendChild(fila);
+  }
+}
+
+// ── Exportar / importar ajustes ──────────────────────────────────────────────
+const CLAVES_AJUSTES = [
+  'enabled', 'ytAdBlock', 'guardEnabled', 'downloadGuard', 'antiAdblockWalls',
+  'siteExcluded', 'customHidden',
+];
+
+exportBtn.addEventListener('click', () => {
+  chrome.storage.local.get(CLAVES_AJUSTES, (data) => {
+    const texto = JSON.stringify({ shieldx: 1, ajustes: data }, null, 2);
+    // Un blob local, sin salir del navegador ni pasar por ningún servidor.
+    const url = URL.createObjectURL(new Blob([texto], { type: 'application/json' }));
+    chrome.downloads.download({ url, filename: 'shieldx-ajustes.json', saveAs: true },
+      () => {
+        void chrome.runtime.lastError;
+        settingsDesc.textContent = 'Ajustes guardados';
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      });
+  });
+});
+
+importBtn.addEventListener('click', () => importFile.click());
+
+importFile.addEventListener('change', () => {
+  const fichero = importFile.files && importFile.files[0];
+  if (!fichero) return;
+  const lector = new FileReader();
+  lector.onload = () => {
+    let datos;
+    try { datos = JSON.parse(String(lector.result)); }
+    catch (_) { settingsDesc.textContent = 'Ese fichero no es de ShieldX'; return; }
+
+    const ajustes = datos && datos.ajustes;
+    if (!ajustes || typeof ajustes !== 'object') {
+      settingsDesc.textContent = 'Ese fichero no es de ShieldX';
+      return;
+    }
+
+    // Sólo se acepta lo conocido y con el tipo correcto: un fichero de fuera
+    // no puede meter claves raras en el almacenamiento.
+    const limpio = {};
+    for (const k of ['enabled', 'ytAdBlock', 'guardEnabled', 'downloadGuard', 'antiAdblockWalls']) {
+      if (typeof ajustes[k] === 'boolean') limpio[k] = ajustes[k];
+    }
+    if (Array.isArray(ajustes.siteExcluded)) {
+      limpio.siteExcluded = ajustes.siteExcluded
+        .filter(h => typeof h === 'string' && h.length < 254)
+        .map(normalizeHost).filter(Boolean).slice(0, 500);
+    }
+    if (ajustes.customHidden && typeof ajustes.customHidden === 'object' &&
+        !Array.isArray(ajustes.customHidden)) {
+      const mapa = {};
+      for (const [host, sels] of Object.entries(ajustes.customHidden)) {
+        if (typeof host !== 'string' || !Array.isArray(sels)) continue;
+        const validos = sels.filter(s => typeof s === 'string' && s.length < 400).slice(0, 200);
+        if (validos.length) mapa[normalizeHost(host)] = validos;
+      }
+      limpio.customHidden = mapa;
+    }
+
+    if (!Object.keys(limpio).length) {
+      settingsDesc.textContent = 'El fichero no traía nada aprovechable';
+      return;
+    }
+
+    chrome.storage.local.set(limpio, () => {
+      settingsDesc.textContent = 'Ajustes restaurados';
+      // La capa de red se levanta desde el service worker.
+      chrome.runtime.sendMessage({ type: 'SYNC_RULES' }, () => void chrome.runtime.lastError);
+      refresh();
+      refreshCustom();
+      pintarExcluidos(limpio.siteExcluded || []);
+    });
+  };
+  lector.readAsText(fichero);
 });
 
 // Sondeo mientras el popup está abierto

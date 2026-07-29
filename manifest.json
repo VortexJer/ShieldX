@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ShieldX – Bloqueador Total",
-  "version": "11.7",
+  "version": "11.8",
   "description": "Bloquea anuncios, rastreadores, resultados patrocinados y banners de cookies. Sin excepciones.",
   "content_security_policy": {
     "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
@@ -55,6 +55,19 @@
       "all_frames": true
     }
   ],
+  "commands": {
+    "sx-toggle-site": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Activar o excluir ShieldX en este sitio"
+    },
+    "sx-pick": {
+      "suggested_key": { "default": "Alt+Shift+X" },
+      "description": "Señalar un elemento para ocultarlo"
+    },
+    "sx-cookie-show": {
+      "description": "Volver a mostrar el aviso de cookies de esta página"
+    }
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

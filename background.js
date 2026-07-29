@@ -12,7 +12,7 @@
 
 const VALID_MSG_TYPES = new Set([
   'BLOCKED', 'COOKIE_BLOCKED', 'GET_STATS', 'SET_SITE', 'RESET_STATS',
-  'GESTURE', 'GUARD_BLOCKED'
+  'GESTURE', 'GUARD_BLOCKED', 'SYNC_RULES'
 ]);
 
 const DEFAULTS = {
@@ -20,6 +20,7 @@ const DEFAULTS = {
   ytAdBlock: true,
   guardEnabled: true,     // anti pop-under y anti redirección forzada
   downloadGuard: true,    // confirmar descargas que el usuario no ha pedido
+  antiAdblockWalls: true, // retirar los muros de "desactiva el bloqueador"
   blockedTotal: 0,
   cookiesBlocked: 0,
   redirectsBlocked: 0,
@@ -61,6 +62,56 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   chrome.tabs.sendMessage(tab.id, { type: 'PICK_START' }, () => void chrome.runtime.lastError);
 });
 
+// ── Atajos de teclado ────────────────────────────────────────────────────────
+// Alt+Shift+S excluye o reactiva el sitio actual sin abrir el popup, que es lo
+// que uno quiere cuando una web se ve rota y hay que decidir en el momento.
+// Alt+Shift+X entra en modo señalar. El tercero no trae tecla asignada de
+// fábrica: el usuario puede ponerle una en chrome://extensions/shortcuts.
+if (chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener((comando, tab) => {
+    if (!tab || tab.id === undefined) return;
+
+    if (comando === 'sx-pick') {
+      chrome.tabs.sendMessage(tab.id, { type: 'PICK_START' },
+        () => void chrome.runtime.lastError);
+      return;
+    }
+
+    if (comando === 'sx-cookie-show') {
+      chrome.tabs.sendMessage(tab.id, { type: 'COOKIE_SHOW' },
+        () => void chrome.runtime.lastError);
+      return;
+    }
+
+    if (comando === 'sx-toggle-site') {
+      const host = hostFromUrl(tab.url);
+      if (!host) return;   // páginas internas de Chrome
+      chrome.storage.local.get(['siteExcluded'], (data) => {
+        const list = new Set(Array.isArray(data.siteExcluded) ? data.siteExcluded : []);
+        const estaba = list.has(host);
+        if (estaba) list.delete(host); else list.add(host);
+        chrome.storage.local.set({ siteExcluded: [...list] }, () => {
+          syncSiteRules();
+          avisar(tab.id, estaba
+            ? 'ShieldX vuelve a actuar en ' + host
+            : 'ShieldX ya no actúa en ' + host);
+          chrome.tabs.reload(tab.id);
+        });
+      });
+    }
+  });
+}
+
+// Un aviso corto y sin botones: lo que se acaba de hacer con una tecla.
+function avisar(tabId, texto) {
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title: 'ShieldX',
+    message: texto,
+  }, () => void chrome.runtime.lastError);
+}
+
 // ── Reglas de red para los sitios excluidos ──────────────────────────────────
 // allowAllRequests sobre el main_frame exime al documento y a todos sus
 // subrecursos de las reglas estáticas de bloqueo.
@@ -91,7 +142,13 @@ function normalizeHost(host) {
 }
 
 function hostFromUrl(url) {
-  try { return normalizeHost(new URL(url).hostname); } catch (_) { return ''; }
+  try {
+    const u = new URL(url);
+    // Sólo la web de verdad: en chrome://extensions/ el "hostname" es
+    // "extensions", y el atajo llegaba a excluir ese sitio fantasma.
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return normalizeHost(u.hostname);
+  } catch (_) { return ''; }
 }
 
 // ── Contadores ───────────────────────────────────────────────────────────────
@@ -175,11 +232,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  // El popup acaba de importar ajustes: hay que levantar las reglas de red.
+  if (msg.type === 'SYNC_RULES') { syncSiteRules(); return; }
+
   if (msg.type === 'GET_STATS') {
     const wanted = typeof msg.tabId === 'number' ? msg.tabId : null;
     chrome.storage.local.get(
       ['blockedTotal', 'cookiesBlocked', 'redirectsBlocked', 'enabled',
-       'ytAdBlock', 'guardEnabled', 'downloadGuard', 'siteExcluded'],
+       'ytAdBlock', 'guardEnabled', 'downloadGuard', 'antiAdblockWalls',
+       'siteExcluded'],
       (data) => {
         const excluded = Array.isArray(data.siteExcluded) ? data.siteExcluded : [];
         sendResponse({
@@ -190,6 +251,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ytAdBlock:        data.ytAdBlock     !== false,
           guardEnabled:     data.guardEnabled  !== false,
           downloadGuard:    data.downloadGuard !== false,
+          antiAdblockWalls: data.antiAdblockWalls !== false,
           pageCount:        wanted !== null ? (pageCounts.get(wanted) || 0) : 0,
           siteExcluded:     excluded
         });

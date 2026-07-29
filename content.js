@@ -78,10 +78,14 @@ function propagateGuardState(on) {
   } catch (_) {}
 }
 
-const STATE_KEYS = ['enabled', 'ytAdBlock', 'guardEnabled', 'siteExcluded', 'customHidden'];
+const STATE_KEYS = ['enabled', 'ytAdBlock', 'guardEnabled', 'siteExcluded',
+                    'customHidden', 'antiAdblockWalls'];
+
+let antiAdblockWalls = true;   // retirar los muros de "desactiva el bloqueador"
 
 function applyState(data) {
   globalEnabled = data.enabled !== false;
+  antiAdblockWalls = data.antiAdblockWalls !== false;
   const list = Array.isArray(data.siteExcluded) ? data.siteExcluded : [];
   siteExcluded = list.some(hostMatches);
 
@@ -607,6 +611,93 @@ function killOverlays(force) {
   return n;
 }
 
+// ── Muros de "desactiva tu bloqueador" ───────────────────────────────────────
+// Distinto de un muro de pago: aquí no se pide dinero ni una cuenta, se tapa el
+// contenido hasta que apagues el bloqueador. Se retira la capa y se devuelve el
+// scroll, que es lo único que hace falta; NO se pulsa ningún botón suyo ni se
+// finge que no hay bloqueador.
+//
+// El listón es alto a propósito: tiene que hablar de bloqueadores de anuncios
+// (un artículo SOBRE adblockers no vale: lo que cuenta es un aviso corto) y
+// además estar tapando la página o haber dejado el scroll bloqueado.
+const ANTIADBLOCK_RE =
+  /(ad\s?-?block|adblocker|bloqueador\s+de\s+anuncios|bloqueadores\s+de\s+anuncios|desactiva\w*\s+(tu|el)\s+bloqueador|werbeblocker|bloqueur\s+de\s+publicit)/i;
+const ANTIADBLOCK_PEDIDO_RE =
+  /(desactiv|desactív|deshabilit|desconect|apag|disable|turn\s+off|whitelist|lista\s+blanca|permitir\s+anuncios|allow\s+ads|pause\s+it|desbloquea)/i;
+
+function scrollBloqueado() {
+  try {
+    for (const el of [document.documentElement, document.body]) {
+      if (!el) continue;
+      const s = getComputedStyle(el);
+      if (s.overflow === 'hidden' || s.position === 'fixed') return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function killAntiAdblock() {
+  if (!isActive() || !IS_TOP_FRAME || !domReady || !antiAdblockWalls) return 0;
+
+  let candidatos;
+  try {
+    candidatos = document.querySelectorAll(
+      'div:not([data-sx-aab]),section:not([data-sx-aab]),' +
+      'aside:not([data-sx-aab]),dialog:not([data-sx-aab])');
+  } catch (_) { return 0; }
+
+  const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+  let n = 0;
+
+  for (const el of candidatos) {
+    if (el.hasAttribute('data-sx')) continue;
+    const texto = (el.textContent || '').trim();
+    // Un aviso es corto. Un artículo sobre bloqueadores, no.
+    if (texto.length < 15 || texto.length > 700) continue;
+    if (!ANTIADBLOCK_RE.test(texto) || !ANTIADBLOCK_PEDIDO_RE.test(texto)) continue;
+
+    el.setAttribute('data-sx-aab', '1');   // visto: no volver a mirarlo
+
+    let s;
+    try { s = getComputedStyle(el); } catch (_) { continue; }
+    const flotante = s.position === 'fixed' || s.position === 'absolute' || s.position === 'sticky';
+    if (!flotante) continue;
+
+    const r = el.getBoundingClientRect();
+    const tapaLaPagina = r.width * r.height > vw * vh * 0.35;
+
+    // El fondo oscuro suele ser el padre inmediato: a pantalla completa,
+    // flotante y sin más contenido que el propio aviso. Un muro modal centrado
+    // no tapa la pantalla por sí mismo, pero su fondo sí — y sin mirarlo, el
+    // caso más común de todos se escapaba.
+    let backdrop = null;
+    const padre = el.parentElement;
+    if (padre && padre !== document.body && padre !== document.documentElement) {
+      try {
+        const rp = padre.getBoundingClientRect();
+        const sp = getComputedStyle(padre);
+        if (rp.width * rp.height > vw * vh * 0.8 &&
+            (sp.position === 'fixed' || sp.position === 'absolute') &&
+            (padre.textContent || '').trim().length <= texto.length + 40) {
+          backdrop = padre;
+        }
+      } catch (_) {}
+    }
+
+    // Te tapa la pantalla, tiene fondo que la tapa, o te ha dejado sin scroll.
+    // Si no hace ninguna de las tres, es un aviso discreto y se queda.
+    if (!tapaLaPagina && !backdrop && !scrollBloqueado()) continue;
+
+    if (backdrop) hide(backdrop);
+    hide(el);
+    unlockScroll();
+    n++;
+  }
+
+  if (n > 0) report(n);
+  return n;
+}
+
 // ── Meta refresh hacia otro dominio ──────────────────────────────────────────
 // El <meta http-equiv="refresh"> que te lleva solo a otra web es un vector
 // clásico de redirección forzada, y location es inparcheable desde script.
@@ -685,6 +776,7 @@ function runPasses() {
   paso(sweep);
   paso(stripMetaRefresh);
   paso(skipCookies);
+  paso(killAntiAdblock);
   if (domReady) paso(killOverlays);
 }
 
