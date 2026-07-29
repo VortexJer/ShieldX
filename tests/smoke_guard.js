@@ -64,8 +64,21 @@ const boton = Object.assign(new global.HTMLElement(), {
 });
 const fondo = Object.assign(new global.HTMLElement(), { closest: () => null });
 
-function gesto(target) {
-  for (const fn of handlers['pointerdown'] || []) fn({ isTrusted: true, target });
+function gesto(target, path) {
+  for (const fn of handlers['pointerdown'] || []) {
+    fn({
+      isTrusted: true, target,
+      composedPath: path ? () => path : undefined,
+    });
+  }
+}
+// Un elemento que responde a matches() como lo haria el navegador.
+function nodoQueCasa(selectorEsperado) {
+  return Object.assign(new global.HTMLElement(), {
+    nodeType: 1,
+    matches: (sel) => sel.includes(selectorEsperado),
+    closest: () => null,
+  });
 }
 
 // ── Casos ───────────────────────────────────────────────────────────────────
@@ -158,7 +171,71 @@ gesto(fondo);
 descarga.click();
 comprobar('descarga blob programática tras un gesto, permitida', clicNativo === 1);
 
-// 11. Con el guard apagado no se estorba a nadie.
+// 11. Shadow DOM: el evento se re-apunta al host del componente, asi que
+//     e.target NO es el boton. Con composedPath() si se ve, y su ventana debe
+//     abrirse. Sin esto, un <button> dentro de un web component parece muerto.
+const hostShadow = Object.assign(new global.HTMLElement(), {
+  nodeType: 1, matches: () => false, closest: () => null,
+});
+const botonEnShadow = nodoQueCasa('button');
+aperturasReales = 0;
+gesto(hostShadow, [botonEnShadow, hostShadow]);
+r = global.window.open('https://oauth.example/popup');
+comprobar('boton dentro de shadow DOM autoriza la ventana',
+  aperturasReales === 1 && r.real === true);
+
+// 12. Y el clic en el fondo dentro de un shadow DOM sigue sin autorizar.
+const fondoEnShadow = Object.assign(new global.HTMLElement(), {
+  nodeType: 1, matches: () => false, closest: () => null,
+});
+gesto(hostShadow, [fondoEnShadow, hostShadow]);
+r = global.window.open('https://porno-scam.example');
+comprobar('fondo dentro de shadow DOM no autoriza', aperturasReales === 1 && !r.real);
+
+// 13. Gesto de teclado (Enter sobre un boton): cuenta igual que el raton.
+aperturasReales = 0;
+for (const fn of handlers['keydown'] || []) fn({ isTrusted: true, target: boton });
+r = global.window.open('https://destino-legitimo.example');
+comprobar('Enter sobre un boton autoriza la ventana', aperturasReales === 1 && r.real === true);
+
+// 14. Evento sintetico (isTrusted false): no autoriza nada.
+aperturasReales = 0;
+for (const fn of handlers['pointerdown'] || []) fn({ isTrusted: false, target: boton });
+r = global.window.open('https://porno-scam.example');
+comprobar('clic sintetico (isTrusted=false) no autoriza', aperturasReales === 0 && !r.real);
+
+// 15. Anchor suelto SIN target pero con href http: sigue siendo pop-under.
+const sueltoHttp = new global.HTMLAnchorElement();
+sueltoHttp.isConnected = false;
+sueltoHttp.href = 'https://scam.example/x';
+sueltoHttp.getAttribute = () => null;
+clicNativo = 0;
+gesto(fondo);
+sueltoHttp.click();
+comprobar('anchor suelto hacia http sin gesto valido, bloqueado', clicNativo === 0);
+
+// 16. Anchor CONECTADO y sin target: es un enlace normal, jamas se toca.
+const anclaNormal = new global.HTMLAnchorElement();
+anclaNormal.isConnected = true;
+anclaNormal.href = 'https://sitio.example/articulo';
+anclaNormal.getAttribute = () => null;
+clicNativo = 0;
+gesto(fondo);
+anclaNormal.click();
+comprobar('anchor conectado sin target funciona aunque el gesto no autorice', clicNativo === 1);
+
+// 17. Formulario normal (sin target=_blank) nunca se bloquea.
+const formNormal = new global.HTMLFormElement();
+formNormal.getAttribute = () => null;
+let enviado = 0;
+global.HTMLFormElement.prototype.constructor;
+formNormal.action = 'https://sitio.example/buscar';
+const submitOriginal = global.HTMLFormElement.prototype.submit;
+let paso = false;
+try { formNormal.submit(); paso = true; } catch (_) {}
+comprobar('form normal (sin target=_blank) se envia siempre', paso === true);
+
+// 18. Con el guard apagado no se estorba a nadie.
 guardAttr = '0';
 aperturasReales = 0;
 r = global.window.open('https://lo-que-sea.example');

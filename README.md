@@ -10,7 +10,7 @@ para Chrome (Manifest V3).
 | Red | `rules/ads.json` | 310 reglas `declarativeNetRequest` contra dominios de anuncios y telemetría |
 | Red | `rules/redirect.json` | 55 reglas contra redes de pop-under y redirección (PopAds, PropellerAds, ExoClick, Adsterra…), incluida la navegación principal |
 | Red | `rules/cleanurl.json` | Limpia los parámetros de rastreo de las URLs al navegar (`utm_*`, `gclid`, `fbclid`, `msclkid`, `igshid`…) |
-| Picker | `content.js` + menú contextual | «Ocultar elemento»: señala cualquier cosa de una página y ShieldX la oculta y la recuerda para ese sitio; restaurable desde el popup |
+| Picker | `content.js` + menú contextual | «Ocultar elemento»: señala cualquier cosa de una página y ShieldX la oculta y la recuerda para ese sitio; restaurable desde el popup. Se sale con **Esc**, con **clic derecho** o con el botón **SALIR** del cartel |
 | DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, oculta banners de cookies (sin pulsar nada en nombre del usuario) y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
 | YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |
@@ -45,6 +45,11 @@ verdad:
   de forma explícita **y** habla de aceptar, rechazar o configurar. Un modal de
   registro que enlaza la política de privacidad no cumple eso, y por eso ya no
   desaparece.
+- **Un anuncio tiene algo que enseñar.** Los nombres de la lista ambigua
+  (`.promo-banner`, `.ad-box`…) los usan también los avisos de la propia web.
+  Un bloque que solo lleva una frase —«tu pedido se ha guardado», «revisa el
+  número de tarjeta»— no se oculta salvo que traiga imagen, iframe o enlace, o
+  tenga medidas de formato publicitario (300×250, 728×90…).
 - **Dentro de un iframe no se oculta ningún banner.** El aviso de un CMP suele
   vivir en su propio iframe: vaciarlo desde dentro deja el iframe a pantalla
   completa pero en blanco, con el velo del sitio puesto y el scroll bloqueado —
@@ -124,16 +129,28 @@ de pago. Bloquear anuncios y evadir una suscripción no son lo mismo.
 
 ## Pruebas
 
-    node tests/smoke.js
-    node tests/smoke_yt.js
-    node tests/smoke_guard.js
-    node tests/smoke_cookies.js
+    node tests/run.js        # toda la batería: 227 comprobaciones, 9 ficheros
+
+o cada una por separado:
+
+    node tests/smoke.js            # dónde entra la capa de ocultado
+    node tests/smoke_arranque.js   # el observer se crea pase lo que pase
+    node tests/smoke_hide.js       # qué se oculta y qué NO
+    node tests/smoke_cookies.js    # banners, y lo que abres tú
+    node tests/smoke_guard.js      # qué ventanas se permiten
+    node tests/smoke_picker.js     # el picker y sus tres salidas
+    node tests/smoke_yt.js         # YouTube
+    node tests/smoke_background.js # descargas, contadores, exclusión
+    node tests/smoke_rules.js      # manifest y reglas de red
 
 Sin dependencias: arrancan cada script con stubs mínimos del navegador y
-comprueban la política de bloqueo. `smoke_guard.js` verifica en concreto que un
-enlace normal —y un botón hecho con `<div>`— siguen funcionando y que un
-pop-under no; `smoke_cookies.js`, que lo que abres tú no se oculta y que dentro
-de un iframe no se toca nada.
+comprueban la política de bloqueo. Los casos no salen de la imaginación: cada
+uno es un fallo que apareció navegando de verdad. `smoke_guard.js` verifica que
+un enlace normal —y un botón hecho con `<div>`, y otro dentro de un shadow
+DOM— siguen funcionando y que un pop-under no; `smoke_hide.js`, que un aviso
+de la propia web («tu pedido se ha guardado») no se toma por un anuncio;
+`smoke_arranque.js`, que el vigilante del DOM se crea aunque algo falle en la
+primera pasada.
 
 ## Privacidad
 

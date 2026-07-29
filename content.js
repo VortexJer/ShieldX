@@ -100,13 +100,22 @@ function applyState(data) {
   if (isActive() && !IS_MAIL_APP) start(); else stop();
 }
 
-chrome.storage.local.get(STATE_KEYS, applyState);
+// El callback puede llegar en el MISMO tick, con el fichero todavía a medio
+// evaluar: las constantes declaradas más abajo (CUSTOM_CSS_ID, los selectores
+// de cookies…) estarían en zona muerta y applyState lanzaría, dejando la página
+// con el CSS puesto pero sin observer — bloqueador mudo el resto de la sesión.
+// Un microtask basta: se procesa cuando la evaluación del script ha terminado.
+function aplicarEstadoCuandoTodoExista(data) {
+  Promise.resolve().then(() => applyState(data));
+}
+
+chrome.storage.local.get(STATE_KEYS, aplicarEstadoCuandoTodoExista);
 
 // Reaccionar en TODAS las pestañas, no sólo en la activa.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
   if (!STATE_KEYS.some(k => k in changes)) return;
-  chrome.storage.local.get(STATE_KEYS, applyState);
+  chrome.storage.local.get(STATE_KEYS, aplicarEstadoCuandoTodoExista);
 });
 
 // ── Puente con guard.js ──────────────────────────────────────────────────────
@@ -114,6 +123,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // distinguir la descarga que pides tú de la que arranca sola.
 let lastGestureSent = 0;
 let lastUserGesture = 0;   // sin throttle: lo usan las guardias anti-falso-positivo
+
+// Todo el estado que consultan las pasadas se declara AQUÍ, antes de nada más.
+// chrome.storage puede responder en el mismo tick, y entonces la primera pasada
+// corre mientras el resto del fichero aún se está evaluando: una variable `let`
+// declarada más abajo estaría en zona muerta y lanzaría ReferenceError. Eso
+// mataba start() justo antes de crear el observer — el CSS entraba y el barrido
+// no arrancaba nunca.
+let cookieSettingsUntil = 0;
 
 function recentGesture(ms) { return Date.now() - lastUserGesture < ms; }
 
@@ -130,7 +147,9 @@ for (const type of ['pointerdown', 'keydown']) {
   window.addEventListener(type, (e) => {
     if (!e.isTrusted) return;
     lastUserGesture = Date.now();
-    if (e.target && clickWantsCookieUI(e.target)) restoreCookieUI();
+    // composedPath()[0] atraviesa el shadow DOM; e.target se queda en el host.
+    const objetivo = (typeof e.composedPath === 'function' && e.composedPath()[0]) || e.target;
+    if (objetivo && clickWantsCookieUI(objetivo)) restoreCookieUI();
     noteGesture();
   }, true);
 }
@@ -392,12 +411,25 @@ const STRUCTURAL = new Set([
   'SECTION', 'FORM', 'TABLE', 'TBODY', 'UL', 'OL', 'VIDEO', 'AUDIO'
 ]);
 
+// Formatos publicitarios estándar (IAB). Un hueco con estas medidas es un
+// anuncio aunque esté vacío; una caja de cualquier otro tamaño, no tanto.
+const AD_SIZES = [
+  [300, 250], [336, 280], [728, 90], [970, 90], [970, 250], [320, 50], [320, 100],
+  [300, 600], [160, 600], [120, 600], [300, 100], [468, 60], [250, 250], [200, 200],
+];
+
+function tieneMedidaDeAnuncio(r) {
+  return AD_SIZES.some(([w, h]) =>
+    Math.abs(r.width - w) <= 2 && Math.abs(r.height - h) <= 2);
+}
+
 function isSafeToHide(el) {
   if (STRUCTURAL.has(el.tagName)) return false;
 
   // Un anuncio no lleva párrafos de texto: si los lleva, es contenido.
   // textContent no fuerza reflow, a diferencia de innerText.
-  if ((el.textContent || '').length > 600) return false;
+  const texto = (el.textContent || '').trim();
+  if (texto.length > 600) return false;
 
   // Ni formularios, ni reproductores, ni navegación principal.
   if (el.querySelector('video,audio,input,textarea,select,nav,main,article')) return false;
@@ -406,6 +438,14 @@ function isSafeToHide(el) {
   const r = el.getBoundingClientRect();
   const viewport = (window.innerWidth || 1) * (window.innerHeight || 1);
   if (r.width * r.height > viewport * 0.5) return false;
+
+  // Y una frase suelta no es un anuncio. Los nombres de esta lista (.promo-banner,
+  // .ad-box…) los usan también los avisos de la propia web —«tu pedido se ha
+  // guardado»— y ocultarlos deja al usuario sin enterarse de nada. Un anuncio de
+  // verdad trae algo que enseñar (imagen, iframe, enlace), tiene medidas de
+  // formato publicitario, o está vacío del todo.
+  const tieneCarga = !!el.querySelector('img,iframe,picture,canvas,svg,a[href],ins');
+  if (!tieneCarga && !tieneMedidaDeAnuncio(r) && texto.length > 25) return false;
 
   return true;
 }
@@ -626,30 +666,53 @@ let observer   = null;
 let scheduled  = false;
 let lastRun    = 0;
 
+// Cada pasada va aislada: si una falla, las demás siguen. Antes, un fallo en
+// cualquier punto se llevaba por delante el resto de la pasada Y —cuando
+// ocurría en la primera, la de start()— impedía crear el observer, dejando el
+// bloqueador mudo el resto de la vida de la página.
+function paso(fn) {
+  try { fn(); } catch (_) { /* una pasada rota no puede tumbar a las demás */ }
+}
+
 function runPasses() {
   scheduled = false;
   lastRun = performance.now();
-  sweep();
-  stripMetaRefresh();
-  skipCookies();
-  if (domReady) killOverlays();
+  paso(sweep);
+  paso(stripMetaRefresh);
+  paso(skipCookies);
+  if (domReady) paso(killOverlays);
 }
 
 function schedule() {
   if (scheduled || !isActive()) return;
   scheduled = true;
   const wait = Math.max(0, MIN_INTERVAL - (performance.now() - lastRun));
-  setTimeout(() => requestAnimationFrame(runPasses), wait);
+  setTimeout(() => {
+    // requestAnimationFrame NO dispara en una pestaña oculta: si se abre un
+    // enlace en segundo plano (Ctrl+clic) el barrido se quedaba esperando un
+    // frame que no llega, y la pestaña seguía sin limpiar. Con la página
+    // oculta no hay que sincronizarse con nada: se corre y punto.
+    if (document.visibilityState === 'hidden') runPasses();
+    else requestAnimationFrame(runPasses);
+  }, wait);
 }
+
+// Y al volver a ella, un repaso inmediato.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && isActive()) schedule();
+});
 
 function start() {
   if (started) return;   // idempotente: antes cada activación añadía un observer más
   started = true;
-  buildQueries();
-  injectCSS();
-  runPasses();
+  paso(buildQueries);
+  paso(injectCSS);
+  // El observer PRIMERO: es lo que mantiene vivo el bloqueo durante toda la
+  // vida de la página. Si se crea después de la primera pasada, cualquier
+  // tropiezo en esa pasada deja la página sin vigilancia.
   observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  runPasses();
 }
 
 function stop() {
@@ -782,7 +845,7 @@ function handleCookieContainer(node) {
 // puestos el panel no aparecía jamás. Si el clic cae en un control que habla
 // de cookies, se restaura lo oculto ANTES de que corra el handler del sitio
 // (vamos en captura de pointerdown) y el ocultador se aparta 30 segundos.
-let cookieSettingsUntil = 0;
+// (cookieSettingsUntil se declara arriba del todo, con el resto del estado.)
 
 const COOKIE_CLICK_RE = /cookie|consent|consentimiento|privacidad|privacy|rgpd|gdpr|cmp/i;
 
@@ -956,13 +1019,37 @@ function startPick() {
     'outline:2px solid #00FF88;background:rgba(0,255,136,.14);' +
     'transition:all .06s linear;left:0;top:0;width:0;height:0';
   const tip = document.createElement('div');
-  tip.textContent = 'SHIELDX — CLIC: OCULTAR · ESC: SALIR';
   tip.style.cssText =
-    'position:fixed;z-index:2147483647;pointer-events:none;left:50%;top:12px;' +
+    'position:fixed;z-index:2147483647;left:50%;top:12px;' +
     'transform:translateX(-50%);background:#080B0F;color:#00FF88;' +
-    'border:1px solid rgba(0,255,136,.35);border-radius:4px;padding:5px 12px;' +
-    'font:600 11px/1.4 Consolas,monospace;letter-spacing:.08em';
+    'border:1px solid rgba(0,255,136,.35);border-radius:4px;padding:5px 8px 5px 12px;' +
+    'font:600 11px/1.4 Consolas,monospace;letter-spacing:.08em;' +
+    'display:flex;align-items:center;gap:10px';
+
+  const texto = document.createElement('span');
+  texto.textContent = 'SHIELDX — CLIC: OCULTAR · ESC O CLIC DERECHO: SALIR';
+  texto.style.pointerEvents = 'none';
+
+  // Botón de salida de verdad. El ESC dependía de que la página tuviera el
+  // foco del teclado, y al abrir el picker desde el popup el foco se queda en
+  // la interfaz del navegador: el usuario pulsaba ESC y no pasaba nada.
+  const salir = document.createElement('button');
+  salir.textContent = 'SALIR';
+  salir.style.cssText =
+    'all:unset;cursor:pointer;padding:2px 8px;border:1px solid rgba(0,255,136,.5);' +
+    'border-radius:3px;color:#00FF88;font:600 11px/1.4 Consolas,monospace';
+
+  tip.append(texto, salir);
   document.documentElement.append(box, tip);
+
+  // Y además se recupera el foco, que es la causa de raíz.
+  try { window.focus(); } catch (_) {}
+  try {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    document.documentElement.setAttribute('tabindex', '-1');
+    document.documentElement.focus({ preventScroll: true });
+    document.documentElement.removeAttribute('tabindex');
+  } catch (_) {}
 
   let target = null;
 
@@ -979,13 +1066,20 @@ function startPick() {
   }
 
   function stopPick() {
+    if (!picking) return;
     picking = false;
     box.remove(); tip.remove();
     for (const [t, f] of pares) window.removeEventListener(t, f, true);
+    document.removeEventListener('keydown', onKey, true);
   }
 
   function onClick(e) {
     e.preventDefault(); e.stopPropagation();
+    // El botón SALIR del propio cartel no selecciona nada.
+    if (e.target === salir || (e.composedPath && e.composedPath().includes(salir))) {
+      stopPick();
+      return;
+    }
     const chosen = target;
     stopPick();
     if (!chosen) return;
@@ -1000,14 +1094,26 @@ function startPick() {
     });
   }
 
-  function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); stopPick(); } }
+  // Escape, en mayúscula o minúscula, y también con la tecla Esc antigua.
+  function onKey(e) {
+    if (e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27) {
+      e.preventDefault(); e.stopPropagation();
+      stopPick();
+    }
+  }
+  // El clic derecho también sale: es la salida que el usuario encuentra sola.
+  function onContext(e) { e.preventDefault(); e.stopPropagation(); stopPick(); }
   function swallow(e) { e.preventDefault(); e.stopPropagation(); }
 
   const pares = [
     ['mousemove', onMove], ['click', onClick], ['keydown', onKey],
-    ['mousedown', swallow], ['mouseup', swallow], ['contextmenu', swallow],
+    ['keyup', onKey],
+    ['mousedown', swallow], ['mouseup', swallow], ['contextmenu', onContext],
   ];
   for (const [t, f] of pares) window.addEventListener(t, f, true);
+  // Doble red: si el foco acaba en el documento y no en la ventana, el
+  // keydown llega por aquí. (Quitar el picker retira ambos.)
+  document.addEventListener('keydown', onKey, true);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

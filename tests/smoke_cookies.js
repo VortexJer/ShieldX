@@ -115,6 +115,7 @@ async function pasada() {
 
   new Function(src)();
   storageCb({ enabled: true, ytAdBlock: true, guardEnabled: true, siteExcluded: [] });
+  await dormir(30);   // el estado se aplica en un microtask
 
   comprobar('banner de cookies al cargar (sin gesto): oculto', oculto(banner));
 
@@ -182,6 +183,7 @@ async function pasada() {
     global.window.top = { distinto: true };   // ahora somos un subframe
     new Function(src)();
     storageCb({ enabled: true, ytAdBlock: true, guardEnabled: true, siteExcluded: [] });
+    await dormir(30);
     await pasada();
     comprobar('dentro de un iframe no se toca el banner (lo hace el marco superior)',
       !oculto(bannerEnIframe));

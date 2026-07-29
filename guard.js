@@ -22,13 +22,18 @@
   // ── Registro del último gesto real del usuario ────────────────────────────
   let lastGesture   = 0;
   let gestureTarget = null;
+  let gesturePath   = null;
   let openedInGesture = 0;
   let lastGestureId = 0;
 
   function onGesture(e) {
     if (!e.isTrusted) return;          // los clics sintéticos no cuentan
     lastGesture   = Date.now();
-    gestureTarget = e.target;
+    // Dentro de un shadow DOM, e.target se re-apunta al host del componente:
+    // el botón real queda invisible y su ventana salía bloqueada (verificado
+    // con un <button> dentro de un shadow root). composedPath() sí lo da.
+    gesturePath   = (typeof e.composedPath === 'function') ? e.composedPath() : null;
+    gestureTarget = (gesturePath && gesturePath[0]) || e.target;
     openedInGesture = 0;
     lastGestureId++;
   }
@@ -68,6 +73,15 @@
   }
 
   function gestureLooksLegit() {
+    // El camino compuesto atraviesa las fronteras de shadow DOM, que es
+    // justo donde closest() se detiene.
+    if (gesturePath) {
+      for (let i = 0; i < gesturePath.length && i < 40; i++) {
+        const n = gesturePath[i];
+        if (!n || n.nodeType !== 1 || !n.matches) continue;
+        try { if (n.matches(LEGIT_QUERY)) return true; } catch (_) {}
+      }
+    }
     if (!gestureTarget || !gestureTarget.closest) return false;
     if (gestureTarget.closest(LEGIT_QUERY)) return true;
     return pointerRootIsControl(gestureTarget);

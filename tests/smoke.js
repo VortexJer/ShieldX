@@ -76,14 +76,19 @@ function arrancar(hostname, estado) {
 
   new Function(src)();
   storageCb(estado);
-  return { cssInyectado, atributos, selectoresInvalidos, cssIds };
+  // El estado se aplica en un microtask (ver content.js: con storage sincrono
+  // el fichero podria estar a medio evaluar), asi que se espera a que pase.
+  return new Promise((resolve) => setTimeout(() => resolve({
+    cssInyectado, atributos, selectoresInvalidos, cssIds,
+  }), 0));
 }
 
 const ACTIVO = { enabled: true, ytAdBlock: true, guardEnabled: true, siteExcluded: [] };
 
+(async () => {
 try {
   // 1. Web normal: la capa de ocultado entra.
-  let r = arrancar('www.eldiario.es', ACTIVO);
+  let r = await arrancar('www.eldiario.es', ACTIVO);
   comprobar('en una web normal se inyecta el CSS de bloqueo', r.cssInyectado === true);
   comprobar('el anti-redireccion queda activo', r.atributos['data-shieldx-guard'] === '1');
   comprobar('sin selectores invalidos', r.selectoresInvalidos.length === 0);
@@ -91,36 +96,36 @@ try {
 
   // 2. Clientes de correo: NUNCA se oculta nada, pero el resto sigue.
   for (const host of ['mail.google.com', 'outlook.live.com', 'webmail.uc3m.es', 'mail.proton.me']) {
-    r = arrancar(host, ACTIVO);
+    r = await arrancar(host, ACTIVO);
     comprobar(`en ${host} no se inyecta CSS de bloqueo`, r.cssInyectado === false);
     comprobar(`en ${host} el anti-redireccion sigue activo`, r.atributos['data-shieldx-guard'] === '1');
   }
 
   // 3. Otras aplicaciones de Google no son el buscador: sus clases ofuscadas
   //    podrian coincidir por casualidad con las de los anuncios de busqueda.
-  r = arrancar('drive.google.com', ACTIVO);
+  r = await arrancar('drive.google.com', ACTIVO);
   comprobar('drive.google.com bloquea anuncios (no es cliente de correo)', r.cssInyectado === true);
 
   // 4. Sitio excluido por el usuario: no entra nada.
-  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { siteExcluded: ['eldiario.es'] }));
+  r = await arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { siteExcluded: ['eldiario.es'] }));
   comprobar('sitio excluido: sin CSS', r.cssInyectado === false);
   comprobar('sitio excluido: sin anti-redireccion', r.atributos['data-shieldx-guard'] === '0');
 
   // 5. Pausa global.
-  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { enabled: false }));
+  r = await arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { enabled: false }));
   comprobar('pausa global: sin CSS', r.cssInyectado === false);
 
   // 6. El toggle de YouTube se propaga.
-  r = arrancar('www.youtube.com', Object.assign({}, ACTIVO, { ytAdBlock: false }));
+  r = await arrancar('www.youtube.com', Object.assign({}, ACTIVO, { ytAdBlock: false }));
   comprobar('toggle de YouTube en OFF se propaga', r.atributos['data-shieldx-yt'] === '0');
 
   // 7. Selectores personales del picker: hoja propia en el host que los tiene,
   //    en ningun otro, y tampoco si el sitio esta excluido.
-  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto', '#banner-raro'] } }));
+  r = await arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto', '#banner-raro'] } }));
   comprobar('selectores del picker aplicados en su host', r.cssIds.has('shieldx-custom-css'));
-  r = arrancar('www.elpais.com', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto'] } }));
+  r = await arrancar('www.elpais.com', Object.assign({}, ACTIVO, { customHidden: { 'eldiario.es': ['.molesto'] } }));
   comprobar('los selectores de otro host no se aplican', !r.cssIds.has('shieldx-custom-css'));
-  r = arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { siteExcluded: ['eldiario.es'], customHidden: { 'eldiario.es': ['.molesto'] } }));
+  r = await arrancar('www.eldiario.es', Object.assign({}, ACTIVO, { siteExcluded: ['eldiario.es'], customHidden: { 'eldiario.es': ['.molesto'] } }));
   comprobar('sitio excluido: tampoco selectores del picker', !r.cssIds.has('shieldx-custom-css'));
 } catch (e) {
   console.log('FALLO:', e.message);
@@ -130,3 +135,4 @@ try {
 
 console.log(fallos === 0 ? '\nTodo correcto' : `\n${fallos} fallo(s)`);
 process.exit(fallos === 0 ? 0 : 1);
+})();
