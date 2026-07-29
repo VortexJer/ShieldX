@@ -1,2 +1,5 @@
 # Generado por Chrome al cargar la extensión sin empaquetar
 _metadata/
+
+# Volcados de bash en Windows
+*.stackdump
