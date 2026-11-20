@@ -12,6 +12,12 @@
 
 const el = (id) => document.getElementById(id);
 
+// La versión visible sale del manifest: escrita a mano se quedó en v11.5.
+try {
+  const vtag = el('vtag');
+  if (vtag) vtag.textContent = 'v' + chrome.runtime.getManifest().version;
+} catch (_) {}
+
 const toggle       = el('masterToggle');
 const statusText   = el('stText');
 const statusDot    = el('stDot');
