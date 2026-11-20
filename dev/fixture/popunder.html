@@ -1,0 +1,10 @@
+<!doctype html><meta charset=utf-8><title>pop-under</title>
+<body style="margin:0"><div id="zona" style="height:600px;background:#eee;cursor:default">zona sin boton: cualquier clic dispara un pop-under</div>
+<button id="legit" onclick="window.open('/ok.html','_blank')">Abrir ventana tras clic en boton</button>
+<div id="fakebtn" role="button" tabindex=0 onclick="window.open('/ok.html','_blank')">div-boton ARIA</div>
+<script>
+// pop-under clásico: en el primer clic en CUALQUIER sitio abre otra pestaña
+document.addEventListener('click',e=>{ if(e.target.id==='zona'){ window.__w=window.open('/ok.html','_blank'); } });
+// ancla sintética
+document.getElementById('zona').addEventListener('mousedown',()=>{const a=document.createElement('a');a.href='/ok.html';a.target='_blank';a.click();});
+</script>
