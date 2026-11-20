@@ -1226,44 +1226,5 @@
     "script"
    ]
   }
- },
- {
-  "id": 462,
-  "priority": 2,
-  "action": {
-   "type": "block"
-  },
-  "condition": {
-   "urlFilter": "/popup.js",
-   "resourceTypes": [
-    "script"
-   ]
-  }
- },
- {
-  "id": 463,
-  "priority": 2,
-  "action": {
-   "type": "block"
-  },
-  "condition": {
-   "urlFilter": "pu.js",
-   "resourceTypes": [
-    "script"
-   ]
-  }
- },
- {
-  "id": 464,
-  "priority": 2,
-  "action": {
-   "type": "block"
-  },
-  "condition": {
-   "urlFilter": "/pop.js",
-   "resourceTypes": [
-    "script"
-   ]
-  }
  }
 ]
