@@ -1,4 +1,4 @@
-// ShieldX – YouTube Ad Skipper v15 (ShieldX 11.9.1)
+// ShieldX – YouTube Ad Skipper v15 (ShieldX 11.9.1.1)
 // Cambios v15 (formato nuevo de YouTube, medido en vivo 2026-11):
 //  - Poda en los DATOS de todo lo que trae anuncios: reproductor (get_watch,
 //    player, Shorts) y tambien feed, busqueda y columna lateral (browse,
