@@ -164,8 +164,80 @@ reactivar cada uno; antes había que volver a visitar el sitio para quitarlo.
 
 ## Instalación
 
-1. `chrome://extensions` → activar **Modo desarrollador**.
-2. **Cargar descomprimida** → seleccionar esta carpeta.
+ShieldX no está en la Chrome Web Store: se instala como extensión
+«descomprimida» desde una carpeta. Son dos minutos.
+
+### 1. Descargar
+
+Elige una de las dos:
+
+- **ZIP** (sin instalar nada): en esta página de GitHub, botón verde **Code →
+  Download ZIP**. Descomprímelo en una carpeta **fija**, por ejemplo
+  `Documentos\ShieldX`. No la dejes en Descargas ni en el Escritorio si sueles
+  limpiarlos: si la carpeta se borra o se mueve, la extensión deja de funcionar.
+- **Git** (más cómodo para actualizar):
+
+  ```
+  git clone https://github.com/VortexJer/ShieldX.git
+  ```
+
+La carpeta correcta es la que tiene `manifest.json` dentro. Con el ZIP suele
+quedar una carpeta dentro de otra (`ShieldX-main\ShieldX-main`): elige la de
+dentro.
+
+### 2. Cargar en el navegador
+
+**Chrome**
+
+1. Abre `chrome://extensions`.
+2. Activa **Modo de desarrollador** (interruptor arriba a la derecha).
+3. Pulsa **Cargar descomprimida** y selecciona la carpeta que tiene
+   `manifest.json`.
+4. Fija el icono: pieza de puzle de la barra → chincheta junto a ShieldX.
+
+**Edge** — igual, en `edge://extensions`: activa **Modo de desarrollador**
+(menú de la izquierda) y pulsa **Cargar desempaquetada**.
+
+**Brave** — igual, en `brave://extensions`.
+
+**Opera** — igual, en `opera://extensions`.
+
+Firefox y Safari no están soportados (ShieldX usa APIs de Chrome Manifest V3).
+Chrome para Android no admite extensiones.
+
+### 3. Comprobar que funciona
+
+1. Abre el popup: arriba debe salir la misma versión que en `manifest.json`.
+2. **Recarga las pestañas que ya tenías abiertas**: las que se abrieron antes
+   de instalar no tienen ShieldX dentro.
+3. Prueba en YouTube o en una búsqueda de Google con anuncios.
+
+### Actualizar
+
+1. Trae la versión nueva: `git pull` dentro de la carpeta, o descarga el ZIP de
+   nuevo y **reemplaza el contenido de la misma carpeta**.
+2. En `chrome://extensions`, pulsa el botón de recargar (flecha circular) de
+   ShieldX.
+3. Recarga las pestañas abiertas, sobre todo YouTube.
+
+Tus ajustes se conservan al actualizar. Si cambias de carpeta, pasan a ser
+otra extensión: expórtalos antes desde el popup e impórtalos después.
+
+### Problemas típicos
+
+- **Cambio el código y no se nota nada.** Seguramente Chrome tiene cargada otra
+  copia. En `chrome://extensions`, en la tarjeta de ShieldX, mira **Detalles →
+  Cargada desde**: esa es la carpeta que manda. Edita esa o carga la buena.
+- **Dos ShieldX en la lista.** Hay dos carpetas cargadas y las dos actúan a la
+  vez. Quita una con **Quitar**.
+- **«Desactiva las extensiones en modo de desarrollador».** Es un aviso normal
+  de Chrome para las extensiones descomprimidas. Ciérralo; ShieldX sigue
+  activo.
+- **YouTube tarda en arrancar el vídeo.** Desde noviembre de 2026, YouTube
+  impone una espera desde su servidor cuando no se ve el anuncio. Está
+  explicado en [YouTube](#youtube).
+- **Una web se rompe.** Pulsa **Este sitio** en el popup para excluirla, o
+  `Alt+Shift+S`.
 
 ## Interruptores
 
