@@ -5439,5 +5439,100 @@
         "ping"
       ]
     }
+  },
+  {
+    "id": 311,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com/api/stats/ads",
+      "resourceTypes": [
+        "script",
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "media",
+        "websocket",
+        "ping"
+      ]
+    }
+  },
+  {
+    "id": 312,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com/pagead/",
+      "resourceTypes": [
+        "script",
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "media",
+        "websocket",
+        "ping"
+      ]
+    }
+  },
+  {
+    "id": 313,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com/ptracking",
+      "resourceTypes": [
+        "script",
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "media",
+        "websocket",
+        "ping"
+      ]
+    }
+  },
+  {
+    "id": 314,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com/get_midroll_",
+      "resourceTypes": [
+        "script",
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "media",
+        "websocket",
+        "ping"
+      ]
+    }
+  },
+  {
+    "id": 315,
+    "priority": 1,
+    "action": {
+      "type": "block"
+    },
+    "condition": {
+      "urlFilter": "||youtube.com/pcs/activeview",
+      "resourceTypes": [
+        "script",
+        "image",
+        "xmlhttprequest",
+        "sub_frame",
+        "media",
+        "websocket",
+        "ping"
+      ]
+    }
   }
 ]

@@ -13,7 +13,7 @@ para Chrome (Manifest V3).
 | Picker | `content.js` + menú contextual | «Ocultar elemento»: señala cualquier cosa de una página y ShieldX la oculta y la recuerda para ese sitio; restaurable desde el popup. Se sale con **Esc**, con **clic derecho** o con el botón **SALIR** del cartel |
 | DOM | `content.js` | Oculta contenedores publicitarios, retira scripts de redes de anuncios, oculta banners de cookies (sin pulsar nada en nombre del usuario) y elimina las capas transparentes que roban el primer clic |
 | Página | `guard.js` | Bloquea `window.open` y los saltos a otro dominio que no haya pedido el usuario |
-| YouTube | `youtube.js` | Poda las claves de anuncio de los datos del reproductor (incluido `get_watch`, el endpoint SPA actual), oculta los renderers, pulsa «Saltar» y acelera los no salteables |
+| YouTube | `youtube.js` | Poda los anuncios en los datos antes de pintarse (reproductor, `get_watch`, Shorts, feed, búsqueda y columna lateral), oculta los renderers, y si alguno se cuela lo lleva a su final |
 | Muros | `content.js` | Retira los muros de «desactiva tu bloqueador» y devuelve el scroll — sin pulsar nada suyo |
 | Descargas | `background.js` | Pausa y pregunta cuando un fichero empieza a descargarse sin que lo hayas pedido |
 | UI | `popup.html` · `popup.js` | Interruptores, exclusión por sitio y contadores |
@@ -86,20 +86,27 @@ ahí con normalidad.
 
 Tres capas, medidas contra el YouTube real:
 
-1. **Poda de datos**: las claves de anuncio (`adPlacements`, `adSlots`,
-   `playerAds`) se borran del JSON del reproductor antes de que lo consuma —
-   tanto en `ytInitialPlayerResponse` (primer vídeo) como en las respuestas
-   `fetch` de la navegación SPA, que hoy van por `/youtubei/v1/get_watch`, no
-   por `/player`. La poda es profunda (las claves se buscan en todo el árbol,
-   ~1,4 ms) y **jamás bloquea la petición**: ante cualquier error se entrega la
-   respuesta original. `/player/ad_break` se deja pasar a propósito.
-2. **Salto activo**: si aun así entra un anuncio (p. ej. cosido en el stream),
-   se pulsa «Saltar» en cuanto existe y mientras tanto se silencia y acelera.
-   La detección de anuncio usa **solo** la clase del `#movie_player`
-   (`ad-showing`): detectar por los nodos `.ytp-ad-*` se queda pegado, porque
-   persisten ocultos al terminar el anuncio.
-3. **Cosmética**: los renderers de anuncio del feed y la búsqueda se eliminan
-   del DOM y se cubren por CSS.
+1. **Poda de datos**: los anuncios se quitan del JSON antes de que YouTube lo
+   pinte. En el reproductor (`ytInitialPlayerResponse`, `get_watch`, `player`,
+   Shorts) se borran `adPlacements`/`playerAds` y `adSlots` se deja vacío; en
+   feed, búsqueda y columna lateral (`ytInitialData`, `browse`, `search`,
+   `next`) se sacan de su lista los elementos que solo son anuncio. **Jamás
+   bloquea la petición**: ante cualquier error se entrega la respuesta
+   original. `/player/ad_break` se deja pasar a propósito.
+   Desde 2026-11, al quitar el anuncio el servidor impone una espera antes del
+   vídeo (orden de *backoff* firmada en el protocolo SABR, ~10-15 s al navegar
+   entre vídeos). No se puede saltar desde el navegador: forzarla a 0 solo
+   genera reintentos rechazados. Sin bloquear, los anuncios duran 15-39 s.
+2. **Salto activo**: si aun así entra un anuncio, se pulsa «Saltar» si existe;
+   si no (lo normal desde 2026-11), se silencia y se lleva a su final, con
+   salvaguarda: si el `<video>` dura lo mismo que el vídeo real
+   (`getDuration()` del reproductor), no se toca. La detección usa **solo** la
+   clase del `#movie_player` (`ad-showing`): los nodos `.ytp-ad-*` persisten
+   ocultos al terminar el anuncio.
+3. **Cosmética y red**: los renderers de anuncio (también los nuevos
+   `*-view-model` y la estantería de entradas) se eliminan del DOM y se cubren
+   por CSS; las balizas de impresión (`/api/stats/ads`, `/pagead/`,
+   `/ptracking`, `/pcs/activeview`) se bloquean en red.
 4. **El aviso «el reproductor se bloqueará»**: YouTube detecta el bloqueo y
    planta un modal que pausa el vídeo (el `<video>` conserva su `src`: solo
    está pausado). Se retira el diálogo y se reanuda lo que estabas viendo,

@@ -1,4 +1,15 @@
-// ShieldX – YouTube Ad Skipper v13
+// ShieldX – YouTube Ad Skipper v15 (ShieldX 11.9.1)
+// Cambios v15 (formato nuevo de YouTube, medido en vivo 2026-11):
+//  - Poda en los DATOS de todo lo que trae anuncios: reproductor (get_watch,
+//    player, Shorts) y tambien feed, busqueda y columna lateral (browse,
+//    search, next, ytInitialData). Los anuncios no llegan a pintarse.
+//  - adSlots se deja como lista vacia en vez de borrarlo: de las variantes
+//    medidas (12 navegaciones cada una) es la que antes arranca el video.
+//  - Tras quitar el anuncio el servidor impone una espera (SABR backoff
+//    firmado, ~10-15 s al navegar entre videos). Es del servidor: forzarla a 0
+//    solo produce reintentos rechazados. Sin bloquear: 15-39 s con anuncios.
+//  - Los anuncios que se cuelen ya no traen boton "Saltar": se llevan a su
+//    final, con salvaguarda para no tocar nunca el video real.
 // Cambios respecto a v12, verificados contra el YouTube real (2026-07):
 //  - Poda de anuncios en las respuestas del reproductor. La limpieza de
 //    ytInitialPlayerResponse solo cubre el PRIMER video; al navegar dentro de
@@ -53,6 +64,11 @@
     'ytd-statement-banner-renderer', 'ytd-banner-promo-renderer',
     'ytd-shopping-companion-ad-renderer', 'ytd-companion-slot-renderer',
     'ytd-merch-shelf-renderer', 'ytm-companion-ad-renderer',
+    // vistos en vivo 2026-11
+    'ytd-ticket-shelf-renderer', 'ytd-player-legacy-desktop-watch-ads-renderer',
+    'ytd-ads-engagement-panel-content-renderer', 'ytd-brand-video-singleton-renderer',
+    'ytd-brand-video-shelf-renderer', 'ytd-video-masthead-ad-v3-renderer',
+    'ytd-primetime-promo-renderer', 'ytm-promoted-sparkles-web-renderer',
   ];
 
   const AD_TAG_SELECTOR = AD_TAG_SELECTOR_BUILD();
@@ -64,6 +80,12 @@
     ${AD_TAG_SELECTOR},
     ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
     ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+    ytd-rich-item-renderer:has(ad-badge-view-model),
+    ytd-video-renderer:has(ad-badge-view-model),
+    yt-lockup-view-model:has(ad-badge-view-model),
+    ytd-reel-video-renderer:has(ytd-ad-slot-renderer),
+    ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
+    .ytp-paid-content-overlay,
     .ytp-ad-overlay-container,
     .ytp-ad-image-overlay,
     .ytp-ad-text-overlay
@@ -84,49 +106,91 @@
 
   applyCSS();
 
-  // ── Poda de claves de anuncio en los datos del reproductor ────────────────
-  // Profunda: get_watch incrusta el playerResponse en niveles que cambian, asi
-  // que se borran las claves alla donde aparezcan. Son lo bastante especificas
-  // como para no existir con otro significado.
+  // ── Poda de anuncios en los datos, antes de que se pinten ─────────────────
+  // Dos tipos de poda, ambas profundas (get_watch incrusta el playerResponse a
+  // niveles que cambian):
+  //  a) Claves del reproductor: adPlacements, playerAds... se borran. adSlots se
+  //     deja como lista VACIA: medido en vivo (2026-11, 12 navegaciones por
+  //     variante) es lo que menos tarda en arrancar el video y no deja ver ni un
+  //     fotograma de anuncio. Tras quitar el anuncio YouTube impone una espera
+  //     desde el servidor (NextRequestPolicy.backoff en SABR, firmada): ponerla
+  //     a 0 en el cliente solo provoca decenas de reintentos rechazados.
+  //  b) Elementos de feed/busqueda/panel cuya unica razon de ser es un anuncio
+  //     (adSlotRenderer, promotedSparkles..., ticketShelf...): se sacan de su
+  //     lista, asi ni se pintan ni cuentan como impresion. El CSS de arriba
+  //     sigue como red por si cambia el nombre de un renderer.
   const AD_KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
+  const AD_RENDERERS = new Set([
+    'adSlotRenderer', 'promotedSparklesWebRenderer', 'promotedSparklesTextSearchRenderer',
+    'promotedVideoRenderer', 'compactPromotedVideoRenderer', 'searchPyvRenderer',
+    'displayAdRenderer', 'inFeedAdLayoutRenderer', 'statementBannerRenderer',
+    'bannerPromoRenderer', 'actionCompanionAdRenderer', 'companionSlotRenderer',
+    'merchandiseShelfRenderer', 'ticketShelfRenderer', 'brandVideoSingletonRenderer',
+    'brandVideoShelfRenderer', 'adsEngagementPanelContentRenderer',
+    'playerLegacyDesktopWatchAdsRenderer',
+  ]);
 
-  function stripAds(node, depth) {
+  // ¿Este elemento de una lista es solo un envoltorio de anuncio?
+  function isAdItem(item) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+    for (const k in item) {
+      if (AD_RENDERERS.has(k)) return true;
+      const v = item[k];
+      // richItemRenderer / richSectionRenderer / reelItem... -> { content: { adSlotRenderer } }
+      if (v && typeof v === 'object' && v.content && typeof v.content === 'object') {
+        for (const c in v.content) if (AD_RENDERERS.has(c)) return true;
+      }
+    }
+    return false;
+  }
+
+  function stripAds(node, depth, emptySlots) {
     depth = depth || 0;
-    if (!node || typeof node !== 'object' || depth > 12) return false;
+    if (!node || typeof node !== 'object' || depth > 40) return false;
     let changed = false;
     try {
-      if (!Array.isArray(node)) {
+      if (Array.isArray(node)) {
+        for (let i = node.length - 1; i >= 0; i--) {
+          if (isAdItem(node[i])) { node.splice(i, 1); changed = true; }
+        }
+      } else {
         for (const k of AD_KEYS) {
-          if (k in node) { delete node[k]; changed = true; }
+          if (!(k in node)) continue;
+          if (k === 'adSlots' && emptySlots) {
+            if (Array.isArray(node[k]) && node[k].length) { node[k] = []; changed = true; }
+          } else { delete node[k]; changed = true; }
         }
       }
       for (const key in node) {
         const v = node[key];
-        if (v && typeof v === 'object' && stripAds(v, depth + 1)) changed = true;
+        if (v && typeof v === 'object' && stripAds(v, depth + 1, emptySlots)) changed = true;
       }
     } catch (_) { /* objeto sellado: se deja tal cual */ }
     return changed;
   }
 
-  // 1) El primer video: ytInitialPlayerResponse lo asigna un script inline.
-  try {
-    let stored = window.ytInitialPlayerResponse;
-    Object.defineProperty(window, 'ytInitialPlayerResponse', {
-      configurable: true,
-      get() { return stored; },
-      set(v) { if (ytEnabled) stripAds(v); stored = v; }
-    });
-    if (stored) stripAds(stored);
-  } catch (_) { /* si no se puede, queda el salto activo como respaldo */ }
+  // 1) Primera carga: ytInitialPlayerResponse (video) e ytInitialData (feed,
+  //    busqueda, columna del video) los asigna un script inline.
+  for (const name of ['ytInitialPlayerResponse', 'ytInitialData']) {
+    try {
+      let stored = window[name];
+      Object.defineProperty(window, name, {
+        configurable: true,
+        get() { return stored; },
+        set(v) { if (ytEnabled) stripAds(v); stored = v; }
+      });
+      if (stored && ytEnabled) stripAds(stored);
+    } catch (_) { /* si no se puede, quedan el CSS y el salto como respaldo */ }
+  }
 
-  // 2) Los siguientes: llegan por fetch. Medido en vivo: la navegacion SPA usa
-  //    /youtubei/v1/get_watch; /player sigue existiendo en otros flujos y los
-  //    shorts usan los endpoints reel. Se poda el JSON de la respuesta.
+  // 2) Lo demas llega por fetch: get_watch/player (navegacion entre videos),
+  //    reel (Shorts), browse (portada, canales, continuaciones del feed),
+  //    search y next (columna lateral, comentarios).
   //    Cualquier fallo -> respuesta original intacta; jamas se bloquea ni se
   //    retiene la peticion (leccion de v10). /player/ad_break NO casa con este
-  //    patron y se deja pasar a proposito.
-  const PLAYER_ENDPOINT =
-    /\/youtubei\/v1\/(player(\?|$)|get_watch(\?|$)|reel\/reel_watch_sequence(\?|$)|reel\/reel_item_watch(\?|$))/;
+  //    patron y se deja pasar a proposito (bloquearlo es detectable).
+  const DATA_ENDPOINT =
+    /\/youtubei\/v1\/(player|get_watch|next|browse|search|reel\/reel_watch_sequence|reel\/reel_item_watch)(\?|$)/;
   const nativeFetch = window.fetch;
 
   window.fetch = function fetch(input, init) {
@@ -138,14 +202,14 @@
       url = typeof input === 'string' ? input
           : (input instanceof Request ? input.url : String(input || ''));
     } catch (_) { return p; }
-    if (!PLAYER_ENDPOINT.test(url)) return p;
+    if (!DATA_ENDPOINT.test(url)) return p;
 
     return p.then((resp) => {
       if (!resp || !resp.ok) return resp;
       return resp.clone().text().then((text) => {
         try {
           const data = JSON.parse(text);
-          if (!stripAds(data)) return resp;
+          if (!stripAds(data, 0, true)) return resp;
           return new Response(JSON.stringify(data), {
             status: resp.status,
             statusText: resp.statusText,
@@ -186,6 +250,20 @@
                    p.classList.contains('ad-interrupting'));
   }
 
+  // Salvaguarda para el salto: durante el anuncio, getDuration() del
+  // reproductor da la duracion del video REAL y el <video> la del anuncio
+  // (medido: 375 frente a 95). Si coinciden, ese <video> ya es el contenido y
+  // jamas se le salta al final, aunque la clase ad-showing siga pegada.
+  function adVideoIsNotContent(video) {
+    const d = video.duration;
+    if (!isFinite(d) || d <= 0.5) return false;
+    try {
+      const p = document.getElementById('movie_player');
+      const real = p && typeof p.getDuration === 'function' ? p.getDuration() : 0;
+      return real > 0 && Math.abs(real - d) > 1;
+    } catch (_) { return false; }
+  }
+
   function skipAd() {
     if (!ytEnabled) return;
 
@@ -208,10 +286,17 @@
       const skipBtn = document.querySelector(SKIP_SELECTOR);
       if (visible(skipBtn)) { skipBtn.click(); return; }
 
-      // Sin boton: acelerar en silencio. No se toca currentTime, que es lo que
-      // dejaba el reproductor en "cargando" indefinido.
+      // Sin boton (desde 2026-11 los anuncios vienen en tandas de 2 de hasta
+      // ~3 min, sin "Saltar" ni interfaz): silenciar, acelerar y llevar el
+      // anuncio a su final. Medido en vivo: el 16x real se queda en ~10x por el
+      // bufer (35 s por tanda); saltando al final, <3 s. Tras el anuncio YouTube
+      // impone unos segundos en negro (ad-display-override): eso es del
+      // servidor y no se toca.
       video.muted = true;
       if (video.playbackRate !== 16) video.playbackRate = 16;
+      if (adVideoIsNotContent(video) && video.currentTime < video.duration - 0.3) {
+        video.currentTime = video.duration - 0.1;
+      }
       return;
     }
 
@@ -333,6 +418,54 @@
       }
     }
   }).observe(document.documentElement, { childList: true, subtree: true });
+
+  // ── Cambiar de video con carga completa ───────────────────────────────────
+  // Medido en vivo (2026-11): al navegar DENTRO de YouTube, get_watch trae el
+  // anuncio en adSlots y, si se quita, el servidor castiga con una espera de
+  // ~12 s (backoff SABR firmado). En una carga completa el anuncio viene por
+  // adPlacements, se quita sin castigo y el video arranca en ~3 s. Asi que al
+  // abrir otro video se recarga la pagina en vez de dejar que YouTube navegue.
+  function watchTarget(u) {
+    try {
+      const x = new URL(u, location.href);
+      if (x.origin !== location.origin || x.pathname !== '/watch') return null;
+      const v = x.searchParams.get('v');
+      if (!v) return null;
+      const cur = new URL(location.href);
+      // mismo video (p. ej. un enlace a un minuto concreto): no se recarga
+      if (cur.pathname === '/watch' && cur.searchParams.get('v') === v) return null;
+      return x;
+    } catch (_) { return null; }
+  }
+
+  // Clic normal sobre un enlace a otro video. Se respetan Ctrl/Cmd/Shift/
+  // clic central (pestaña nueva) y los botones que viven DENTRO de la
+  // miniatura ("Ver mas tarde", "Añadir a la cola").
+  window.addEventListener('click', (e) => {
+    if (!ytEnabled || e.defaultPrevented || e.button !== 0 ||
+        e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    const t = e.target;
+    if (!t || !t.closest) return;
+    const a = t.closest('a[href]');
+    if (!a || (a.target && a.target !== '_self')) return;
+    const btn = t.closest('button,[role="button"],ytd-thumbnail-overlay-toggle-button-renderer,yt-icon-button');
+    if (btn && a.contains(btn)) return;
+    const x = watchTarget(a.getAttribute('href'));
+    if (!x) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    location.assign(x.href);
+  }, true);
+
+  // Lo que no pasa por un clic (reproduccion automatica, "siguiente" de una
+  // lista, teclado): YouTube anuncia la navegacion y se convierte en carga.
+  window.addEventListener('yt-navigate-start', (e) => {
+    if (!ytEnabled) return;
+    const d = e.detail || {};
+    if (d.pageType !== 'watch' || typeof d.url !== 'string') return;
+    const x = watchTarget(d.url);
+    if (x) location.assign(x.href);
+  }, true);
 
   // ── Arranque ──────────────────────────────────────────────────────────────
   function start() {
