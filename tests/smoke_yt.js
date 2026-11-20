@@ -37,9 +37,10 @@ const PLAYER_JSON = {
   },
 };
 let fetchesNativos = 0;
+let PLAYER_JSON_OVERRIDE = null;
 function nativeFetchStub(url) {
   fetchesNativos++;
-  return Promise.resolve(new Response(JSON.stringify(PLAYER_JSON), {
+  return Promise.resolve(new Response(JSON.stringify(PLAYER_JSON_OVERRIDE || PLAYER_JSON), {
     status: 200, headers: { 'content-type': 'application/json' },
   }));
 }
@@ -72,6 +73,13 @@ try {
   console.log(limpio && intacto
     ? 'OK  anuncios eliminados y el resto del objeto intacto'
     : `FALLO limpio=${limpio} intacto=${intacto}`);
+
+  global.window.ytInitialData = { contents: { items: [
+    { videoRenderer: { videoId: 'a' } }, { richItemRenderer: { content: { adSlotRenderer: {} } } },
+  ] } };
+  const okData = global.window.ytInitialData.contents.items.length === 1;
+  console.log((okData ? 'OK  ' : 'FALLO') + '  ytInitialData (portada/busqueda de la primera carga) sin anuncios');
+  if (!okData) process.exit(1);
 
   // El evento de toggle con detail inválido no debe apagar el bloqueo
   attr = '1';
@@ -139,6 +147,70 @@ try {
     global.document.querySelectorAll = () => [];
   }
 
+  // Anuncio sin boton "Saltar" (formato 2026-11): se lleva al final. Pero si el
+  // <video> dura lo mismo que el video real (getDuration del reproductor), es
+  // el contenido con la clase ad-showing pegada y NO se toca.
+  {
+    const player = Object.assign(el(), {
+      classList: { contains: (c) => c === 'ad-showing' },
+      getDuration: () => 375,
+    });
+    const video = Object.assign(el(), {
+      duration: 95, currentTime: 2, muted: false, playbackRate: 1, paused: false,
+      readyState: 4, play() { return Promise.resolve(); },
+    });
+    global.document.getElementById = (id) => (id === 'movie_player' ? player : null);
+    global.document.querySelector = (sel) => (sel.includes('video') ? video : null);
+    timers.forEach(f => f());
+    const salta = video.currentTime > 94 && video.muted;
+    console.log((salta ? 'OK  ' : 'FALLO') + '  anuncio sin boton llevado a su final');
+    if (!salta) process.exit(1);
+
+    video.duration = 375; video.currentTime = 10;   // ya es el video real
+    timers.forEach(f => f());
+    const respeta = video.currentTime === 10;
+    console.log((respeta ? 'OK  ' : 'FALLO') +
+      '  con ad-showing pegado sobre el video real no se salta al final');
+    if (!respeta) process.exit(1);
+
+    global.document.getElementById = () => null;
+    global.document.querySelector = () => null;
+  }
+
+  // Cambiar de video = carga completa (2026-11: navegar dentro de YouTube
+  // castiga con ~12 s de espera; la carga completa arranca en ~3 s).
+  {
+    const asignadas = [];
+    global.window.location.assign = (u) => asignadas.push(u);
+    global.location.href = 'https://www.youtube.com/watch?v=AAA';
+    global.location.origin = 'https://www.youtube.com';
+    const clic = (href, extra, dentroDeBoton) => {
+      let prevenido = false;
+      const a = { getAttribute: () => href, target: '', contains: () => true };
+      const t = { closest: (sel) => (sel === 'a[href]' ? a : (dentroDeBoton ? {} : null)) };
+      listeners['click'](Object.assign({ button: 0, target: t,
+        preventDefault() { prevenido = true; }, stopImmediatePropagation() {} }, extra || {}));
+      return prevenido;
+    };
+    const casos = [
+      [clic('/watch?v=BBB&list=X'), true, 'clic en otro video -> carga completa'],
+      [clic('/watch?v=AAA&t=30s'), false, 'enlace al mismo video (minuto) -> se deja a YouTube'],
+      [clic('/watch?v=BBB', { ctrlKey: true }), false, 'Ctrl+clic (pestaña nueva) se respeta'],
+      [clic('/watch?v=BBB', null, true), false, 'boton dentro de la miniatura (Ver mas tarde) se respeta'],
+      [clic('/results?search_query=x'), false, 'enlaces que no son de video no se tocan'],
+    ];
+    for (const [got, want, desc] of casos) {
+      const ok = got === want;
+      console.log((ok ? 'OK  ' : 'FALLO') + '  ' + desc);
+      if (!ok) process.exit(1);
+    }
+    asignadas.length = 0;
+    listeners['yt-navigate-start']({ detail: { pageType: 'watch', url: '/watch?v=CCC' } });
+    const okNav = asignadas.length === 1 && asignadas[0].includes('v=CCC');
+    console.log((okNav ? 'OK  ' : 'FALLO') + '  autoplay/siguiente (yt-navigate-start) -> carga completa');
+    if (!okNav) process.exit(1);
+  }
+
   // La poda de fetch: /player y /get_watch pierden los anuncios (esten al
   // nivel que esten) y conservan el video; ad_break y las URLs ajenas pasan
   // tal cual.
@@ -161,8 +233,40 @@ try {
       'fetch a /get_watch (el endpoint SPA real) podado');
     await caso('https://www.youtube.com/youtubei/v1/player/ad_break?prettyPrint=false', false,
       '/player/ad_break pasa sin tocar (bloquearlo es detectable)');
-    await caso('https://www.youtube.com/youtubei/v1/browse', false,
+    await caso('https://www.youtube.com/youtubei/v1/guide', false,
       'URLs ajenas al reproductor pasan sin tocar');
+    // get_watch: adSlots se deja como lista VACIA (medido 2026-11: es la
+    // variante que antes arranca el video), no se borra la clave.
+    {
+      const r = await global.window.fetch('https://www.youtube.com/youtubei/v1/get_watch?x=1');
+      const d = await r.json();
+      const ok = Array.isArray(d.adSlots) && d.adSlots.length === 0;
+      console.log((ok ? 'OK  ' : 'FALLO') + '  get_watch: adSlots vaciado (no borrado)');
+      if (!ok) fallos++;
+    }
+    // browse/search/next: los elementos de anuncio salen de su lista y el
+    // resto queda en su sitio y en orden.
+    {
+      PLAYER_JSON_OVERRIDE = {
+        contents: { items: [
+          { richItemRenderer: { content: { videoRenderer: { videoId: 'a' } } } },
+          { richItemRenderer: { content: { adSlotRenderer: { x: 1 } } } },
+          { promotedSparklesWebRenderer: {} },
+          { videoRenderer: { videoId: 'b' } },
+          { ticketShelfRenderer: {} },
+          { richSectionRenderer: { content: { statementBannerRenderer: {} } } },
+        ] },
+      };
+      for (const ep of ['browse', 'search', 'next']) {
+        const r = await global.window.fetch('https://www.youtube.com/youtubei/v1/' + ep + '?k=1');
+        const d = await r.json();
+        const ids = d.contents.items.map(i => JSON.stringify(i));
+        const ok = d.contents.items.length === 2 && ids[0].includes('"a"') && ids[1].includes('"b"');
+        console.log((ok ? 'OK  ' : 'FALLO') + '  ' + ep + ': anuncios fuera de la lista, videos intactos y en orden');
+        if (!ok) fallos++;
+      }
+      PLAYER_JSON_OVERRIDE = null;
+    }
     if (fallos) process.exit(1);
   })();
 } catch (e) {
