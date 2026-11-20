@@ -2742,34 +2742,9 @@
       "type": "block"
     },
     "condition": {
-      "urlFilter": "||connect.facebook.net^",
+      "urlFilter": "||connect.facebook.net/*/fbevents.js",
       "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 146,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||googletagmanager.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
+        "script"
       ]
     }
   },
@@ -4196,32 +4171,6 @@
     }
   },
   {
-    "id": 225,
-    "priority": 2,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||googletagmanager.com/gtm.js",
-      "resourceTypes": [
-        "script"
-      ]
-    }
-  },
-  {
-    "id": 226,
-    "priority": 2,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||googletagmanager.com/gtag/js",
-      "resourceTypes": [
-        "script"
-      ]
-    }
-  },
-  {
     "id": 227,
     "priority": 2,
     "action": {
@@ -4344,19 +4293,6 @@
     },
     "condition": {
       "urlFilter": "*/banners/pr_*",
-      "resourceTypes": [
-        "image"
-      ]
-    }
-  },
-  {
-    "id": 235,
-    "priority": 2,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "*/banners/*ad*",
       "resourceTypes": [
         "image"
       ]
@@ -4581,158 +4517,6 @@
       "urlFilter": "||mining.js^",
       "resourceTypes": [
         "script"
-      ]
-    }
-  },
-  {
-    "id": 248,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||cookielaw.org^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 249,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||onetrust.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 250,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||trustarc.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 251,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||consent.cookiebot.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 252,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||consentframework.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 253,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||quantcast.mgr.consensu.org^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 254,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||cdn.privacy-mgmt.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 255,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||sourcepoint.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
       ]
     }
   },
@@ -5169,57 +4953,6 @@
     }
   },
   {
-    "id": 280,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||exacttarget.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 281,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||salesforceiq.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 282,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||hubspot.com/hs/hsstatic",
-      "resourceTypes": [
-        "script"
-      ]
-    }
-  },
-  {
     "id": 283,
     "priority": 1,
     "action": {
@@ -5248,44 +4981,6 @@
       "urlFilter": "||pixel.mailchimp.com^",
       "resourceTypes": [
         "image"
-      ]
-    }
-  },
-  {
-    "id": 285,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||click.convertkit-mail.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
-      ]
-    }
-  },
-  {
-    "id": 286,
-    "priority": 1,
-    "action": {
-      "type": "block"
-    },
-    "condition": {
-      "urlFilter": "||imasdk.googleapis.com^",
-      "resourceTypes": [
-        "script",
-        "image",
-        "xmlhttprequest",
-        "sub_frame",
-        "media",
-        "websocket",
-        "ping"
       ]
     }
   },

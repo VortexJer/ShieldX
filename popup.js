@@ -118,9 +118,21 @@ function animateNumber(node, target) {
 }
 
 // ── Carga de estado ──────────────────────────────────────────────────────────
+// El sondeo pregunta el estado cada 1,5 s. Si la respuesta sale ANTES de un clic
+// tuyo y llega DESPUÉS, trae el valor viejo y devolvía el interruptor a su sitio:
+// parecía que no se dejaba desactivar. Una respuesta anterior a la última
+// escritura se descarta.
+let ultimaEscritura = 0;
+function escribir(obj, cb) {
+  ultimaEscritura = Date.now();
+  chrome.storage.local.set(obj, cb);
+}
+
 function refresh() {
+  const pedido = Date.now();
   chrome.runtime.sendMessage({ type: 'GET_STATS', tabId: currentTabId }, (res) => {
     if (chrome.runtime.lastError || !res) return;
+    if (ultimaEscritura >= pedido) return;   // respuesta caducada
     toggle.checked = res.enabled;
     updateUI(res.enabled);
     updateYTUI(res.ytAdBlock);
@@ -181,13 +193,13 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 // Los content scripts escuchan storage.onChanged, así que basta con escribir.
 toggle.addEventListener('change', () => {
   const enabled = toggle.checked;
-  chrome.storage.local.set({ enabled });
+  escribir({ enabled });
   updateUI(enabled);
 });
 
 ytToggle.addEventListener('change', () => {
   const ytAdBlock = ytToggle.checked;
-  chrome.storage.local.set({ ytAdBlock });
+  escribir({ ytAdBlock });
   updateYTUI(ytAdBlock);
 });
 
@@ -259,13 +271,13 @@ customRestoreBtn.addEventListener('click', () => {
 
 guardToggle.addEventListener('change', () => {
   const on = guardToggle.checked;
-  chrome.storage.local.set({ guardEnabled: on });
+  escribir({ guardEnabled: on });
   updateSwitchUI(guardToggle, guardStatus, on);
 });
 
 dlToggle.addEventListener('change', () => {
   const on = dlToggle.checked;
-  chrome.storage.local.set({ downloadGuard: on });
+  escribir({ downloadGuard: on });
   updateSwitchUI(dlToggle, dlStatus, on);
 });
 
@@ -282,7 +294,7 @@ resetBtn.addEventListener('click', () => {
 // ── Muros de "desactiva el bloqueador" ───────────────────────────────────────
 aabToggle.addEventListener('change', () => {
   const on = aabToggle.checked;
-  chrome.storage.local.set({ antiAdblockWalls: on });
+  escribir({ antiAdblockWalls: on });
   updateSwitchUI(aabToggle, aabStatus, on);
 });
 

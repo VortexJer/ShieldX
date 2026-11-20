@@ -43,10 +43,37 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     if (Object.keys(patch).length) chrome.storage.local.set(patch);
     syncSiteRules();
+    syncMasterRulesets();
   });
 });
 
-chrome.runtime.onStartup.addListener(syncSiteRules);
+chrome.runtime.onStartup.addListener(() => { syncSiteRules(); syncMasterRulesets(); });
+
+// ── Interruptor maestro en la capa de red ────────────────────────────────────
+// Pausar ShieldX paraba los content scripts, pero los rulesets estáticos de
+// declarativeNetRequest seguían bloqueando peticiones: el popup decía PAUSADO y
+// la web seguía rota. Ahora los rulesets se apagan y se encienden con el
+// interruptor (y quedan guardados por Chrome entre sesiones).
+const RULESETS = ['ruleset_ads', 'ruleset_redirect', 'ruleset_cleanurl'];
+
+function syncMasterRulesets() {
+  chrome.storage.local.get(['enabled'], (data) => {
+    const on = data.enabled !== false;
+    const dnr = chrome.declarativeNetRequest;
+    if (!dnr || !dnr.updateEnabledRulesets) return;
+    dnr.updateEnabledRulesets(
+      on ? { enableRulesetIds: RULESETS } : { disableRulesetIds: RULESETS },
+      () => void chrome.runtime.lastError);
+  });
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('enabled' in changes) syncMasterRulesets();
+  // Las exclusiones se aplican a la red venga el cambio de donde venga (popup,
+  // atajo, importación o edición directa del almacenamiento).
+  if ('siteExcluded' in changes) syncSiteRules();
+});
 
 // ── Menú contextual: señalar y ocultar desde el clic derecho ─────────────────
 chrome.runtime.onInstalled.addListener(() => {
@@ -287,18 +314,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Una descarga que arranca sin que hayas tocado nada en los últimos segundos es
 // el patrón de las webs que te cuelan un .exe al entrar. Se pausa y se pregunta.
 const lastGesture = new Map();   // tabId -> instante del último clic real
-const GESTURE_WINDOW = 4000;     // ms que se considera "lo ha pedido el usuario"
+// Un botón "Descargar" suele esperar al servidor (generar el fichero, abrir la
+// pestaña de descarga) antes de que arranque: 4 s dejaba pausadas descargas que
+// el usuario sí había pedido.
+const GESTURE_WINDOW = 20000;    // ms que se considera "lo ha pedido el usuario"
 const pendingDownloads = new Map();   // notificationId -> downloadId
 
-function askedByUser(item) {
-  // Descargas iniciadas por la propia interfaz de Chrome (Guardar como…) o sin
-  // pestaña asociada: no hay nada que vigilar.
-  if (typeof item.tabId === 'number' && item.tabId >= 0) {
-    const t = lastGesture.get(item.tabId);
-    if (t && Date.now() - t < GESTURE_WINDOW) return true;
-    return false;
-  }
-  return true;
+// chrome.downloads.DownloadItem NO tiene tabId (el simulacro de los tests lo
+// inventaba, y por eso la vigilancia no actuaba jamás en Chrome real: cada
+// descarga parecía "pedida por ti"). La pestaña de origen se deduce del referrer.
+function originOf(url) {
+  try { return new URL(url).origin; } catch (_) { return ''; }
+}
+
+function pestanasDeOrigen(item, tabs) {
+  if (typeof item.tabId === 'number' && item.tabId >= 0) return [item.tabId];
+  const ref = item.referrer || '';
+  if (!ref) return [];
+  const origen = originOf(ref);
+  return tabs.filter(t => t.url && (t.url === ref || (origen && originOf(t.url) === origen)))
+             .map(t => t.id);
+}
+
+function askedByUser(item, tabs) {
+  // Otra extensión (gestor de descargas, exportador…) la pide a propósito.
+  if (item.byExtensionId) return true;
+  // Sin pestaña asociada (Guardar como… de la propia interfaz de Chrome).
+  if (typeof item.tabId === 'number' && item.tabId < 0) return true;
+
+  const reciente = (t) => t && Date.now() - t < GESTURE_WINDOW;
+  const candidatas = pestanasDeOrigen(item, tabs || []);
+  // El clic tiene que ser en la pestaña de la que sale la descarga: un clic en
+  // otra pestaña no autoriza lo que una pestaña de fondo se descarga sola.
+  if (candidatas.length) return candidatas.some(id => reciente(lastGesture.get(id)));
+  // Sin pista de origen (URL directa, referrer vacío): cualquier clic reciente.
+  return [...lastGesture.values()].some(reciente);
 }
 
 function describe(item) {
@@ -314,27 +364,35 @@ function describe(item) {
 chrome.downloads.onCreated.addListener((item) => {
   chrome.storage.local.get(['enabled', 'downloadGuard'], (data) => {
     if (data.enabled === false || data.downloadGuard === false) return;
-    if (item.state !== 'in_progress') return;
-    if (askedByUser(item)) return;
+    chrome.tabs.query({}, (tabs) => {
+      void chrome.runtime.lastError;
+      if (askedByUser(item, tabs)) return;
 
-    chrome.downloads.pause(item.id, () => {
-      if (chrome.runtime.lastError) return;   // ya terminó o no se puede pausar
+      chrome.downloads.pause(item.id, () => {
+        // Un fichero pequeño puede haber terminado antes de poder pausarlo: se
+        // avisa igualmente, y "Cancelar y borrar" lo elimina del disco.
+        const yaTerminada = !!chrome.runtime.lastError || item.state !== 'in_progress';
+        void chrome.runtime.lastError;
 
-      const { cuerpo } = describe(item);
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: 'ShieldX ha parado una descarga que no pediste',
-        message: cuerpo,
-        requireInteraction: true,
-        buttons: [{ title: 'Permitir' }, { title: 'Cancelar y borrar' }]
-      }, (notificationId) => {
-        if (chrome.runtime.lastError || !notificationId) {
-          // Sin notificación no se puede preguntar: ante la duda, se cancela.
-          chrome.downloads.cancel(item.id, () => void chrome.runtime.lastError);
-          return;
-        }
-        pendingDownloads.set(notificationId, item.id);
+        const { cuerpo } = describe(item);
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon128.png',
+          title: yaTerminada
+            ? 'ShieldX: se descargó un archivo que no pediste'
+            : 'ShieldX ha parado una descarga que no pediste',
+          message: cuerpo,
+          requireInteraction: true,
+          buttons: [{ title: yaTerminada ? 'Conservar' : 'Permitir' },
+                    { title: 'Cancelar y borrar' }]
+        }, (notificationId) => {
+          if (chrome.runtime.lastError || !notificationId) {
+            // Sin notificación no se puede preguntar: ante la duda, se cancela.
+            chrome.downloads.cancel(item.id, () => void chrome.runtime.lastError);
+            return;
+          }
+          pendingDownloads.set(notificationId, item.id);
+        });
       });
     });
   });
@@ -350,7 +408,10 @@ chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) =
   } else {
     chrome.downloads.cancel(downloadId, () => {
       void chrome.runtime.lastError;
-      chrome.downloads.erase({ id: downloadId }, () => void chrome.runtime.lastError);
+      chrome.downloads.removeFile(downloadId, () => {
+        void chrome.runtime.lastError;
+        chrome.downloads.erase({ id: downloadId }, () => void chrome.runtime.lastError);
+      });
     });
   }
   chrome.notifications.clear(notificationId);

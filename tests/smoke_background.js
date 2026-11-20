@@ -20,6 +20,13 @@ let notificacionSiguiente = 'n1';
 let badge = {};
 const aPestana = [];      // mensajes enviados a la pestaña
 let recargada = null;
+// Pestañas abiertas (tabs.query). Una DownloadItem real NO trae tabId: la pestaña
+// de origen se deduce del referrer.
+let pestanasAbiertas = [
+  { id: 1, url: 'https://sitio-pirata.example/pagina' },
+  { id: 2, url: 'https://otra.example/' },
+  { id: 5, url: 'https://fondo.example/' },
+];
 
 function on(nombre) {
   return { addListener(f) { (oyentes[nombre] = oyentes[nombre] || []).push(f); } };
@@ -47,6 +54,7 @@ global.chrome = {
   contextMenus: { create(o, cb) { if (cb) cb(); }, onClicked: on('menu') },
   commands: { onCommand: on('command') },
   tabs: {
+    query(o, cb) { cb(pestanasAbiertas); },
     sendMessage(id, msg, cb) { aPestana.push([id, msg]); if (cb) cb(); },
     reload(id) { recargada = id; },
     onUpdated: on('tabUpdated'), onRemoved: on('tabRemoved'),
@@ -69,6 +77,7 @@ global.chrome = {
     resume(id, cb) { acciones.push(['resume', id]); if (cb) cb(); },
     cancel(id, cb) { acciones.push(['cancel', id]); if (cb) cb(); },
     erase(o, cb) { acciones.push(['erase', o.id]); if (cb) cb(); },
+    removeFile(id, cb) { acciones.push(['removeFile', id]); if (cb) cb(); },
   },
   notifications: {
     create(o, cb) { acciones.push(['notificar', o.title]); cb(notificacionSiguiente); },
@@ -172,6 +181,57 @@ const descarga = (extra) => Object.assign({
   await dormir(10);
   comprobar('con ShieldX pausado no se interviene', acciones.length === 0);
   store.enabled = true;
+
+  // ── Descargas con la forma REAL de DownloadItem: sin tabId, con referrer ──
+  // (El hueco que dejó la vigilancia muerta en Chrome: el campo tabId no existe.)
+  const real = (extra) => Object.assign(descarga({ tabId: undefined }),
+    { referrer: 'https://fondo.example/pagina' }, extra || {});
+
+  acciones.length = 0;
+  disparar('download', real({ id: 20 }));
+  await dormir(10);
+  comprobar('DownloadItem real sin clic en su pestana: se pausa y se pregunta',
+    acciones.some(a => a[0] === 'pause' && a[1] === 20) &&
+    acciones.some(a => a[0] === 'notificar'));
+
+  // Un clic en OTRA pestana (la 1) no autoriza la descarga de la 5.
+  mensaje({ type: 'GESTURE' }, 1);
+  acciones.length = 0;
+  disparar('download', real({ id: 21 }));
+  await dormir(10);
+  comprobar('el clic de otra pestana no autoriza (referrer de la pestana 5)',
+    acciones.some(a => a[0] === 'pause' && a[1] === 21));
+
+  // Con un clic en su propia pestana, pasa.
+  mensaje({ type: 'GESTURE' }, 5);
+  acciones.length = 0;
+  disparar('download', real({ id: 22 }));
+  await dormir(10);
+  comprobar('con clic en la pestana de origen (por referrer) pasa sin preguntar',
+    acciones.length === 0);
+
+  // Sin referrer ni pestana: vale cualquier clic reciente.
+  acciones.length = 0;
+  disparar('download', real({ id: 23, referrer: '' }));
+  await dormir(10);
+  comprobar('sin pista de origen, un clic reciente en cualquier pestana autoriza',
+    acciones.length === 0);
+
+  // Descarga ya terminada (fichero pequeno): no se puede pausar, se avisa igual.
+  store.downloadGuard = true;
+  pestanasAbiertas = [{ id: 9, url: 'https://tercera.example/' }];
+  acciones.length = 0;
+  disparar('download', real({ id: 24, referrer: 'https://tercera.example/x', state: 'complete' }));
+  await dormir(10);
+  comprobar('descarga ya terminada sin clic: se avisa igualmente',
+    acciones.some(a => a[0] === 'notificar'));
+  notificacionSiguiente = 'n24';
+  acciones.length = 0;
+  disparar('download', real({ id: 25, referrer: 'https://tercera.example/x', state: 'complete' }));
+  await dormir(10);
+  disparar('notifBtn', 'n24', 1);
+  comprobar('"Cancelar y borrar" tambien borra el fichero del disco',
+    acciones.some(a => a[0] === 'removeFile' && a[1] === 25));
 
   // ── Contadores ────────────────────────────────────────────────────────────
   store.blockedTotal = 0;

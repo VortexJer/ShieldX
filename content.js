@@ -178,7 +178,7 @@ const STRONG_SELECTORS = [
   // iframes de redes publicitarias
   'iframe[src*="doubleclick"]', 'iframe[src*="googlesyndication"]',
   'iframe[src*="adnxs"]', 'iframe[src*="taboola"]', 'iframe[src*="outbrain"]',
-  'iframe[src*="criteo"]', 'iframe[src*="media.net"]',
+  'iframe[src*="criteo"]', 'iframe[src*="//media.net"]', 'iframe[src*=".media.net/"]',
   'iframe[id*="google_ads"]',
   // Redes de contenido patrocinado
   '[id*="taboola"]', '[class*="taboola"]', '.trc_rbox',
@@ -268,7 +268,7 @@ const YOUTUBE_SELECTORS = [
 // downloads.js, uploads.js o threads.js.
 const AD_SCRIPT_PATTERNS = [
   'adsbygoogle', 'googlesyndication', 'doubleclick', 'adservice.google',
-  'adnxs.com', 'taboola.com', 'outbrain.com', 'criteo.com', 'media.net',
+  'adnxs.com', 'taboola.com', 'outbrain.com', 'criteo.com', '//media.net', '.media.net/',
   'pubmatic.com', 'rubiconproject.com', 'openx.net', 'smartadserver.com',
   'appnexus.com', 'teads.tv', 'adform.net', 'sizmek.com', 'undertone.com',
   'mgid.com', 'revcontent.com', 'mouseflow.com', 'hotjar.com',
@@ -278,24 +278,25 @@ const AD_SCRIPT_PATTERNS = [
   // Analítica y experimentación
   'google-analytics.com/analytics.js', 'google-analytics.com/gtag',
   'google-analytics.com/ga.js',
-  'googletagmanager.com/gtm.js', 'googletagmanager.com/gtag',
   'optimizely.com', 'vwo.com', 'abtasty.com', 'ab-tasty.com',
   'kameleoon.com', 'convertexperiments.com',
-  'fingerprintjs.com', 'fpjscdn.net', 'imasdk.googleapis.com',
+  'fingerprintjs.com', 'fpjscdn.net',
   'coinhive.com', 'crypto-loot.com', 'cryptoloot.pro',
   'skimlinks.com', 'viglink.com',
 ];
 
 const AD_SCRIPT_RE = /(^|[\/._-])ads\.js(\?|$)/i;
 
+// Solo nombres que dicen "anuncio" de forma inequívoca. '/banners/' o
+// 'advertisement' a secas se llevaban por delante los banners legítimos de
+// tiendas y portadas (hero, promociones propias).
 const BANNER_IMG_PATTERNS = [
   'pr_advertising', 'ads_banner', 'ad_banner', 'banner_ad',
-  '/banners/', 'advertisement', 'advert_', '_advert',
 ];
 
 const AD_IFRAME_SELECTOR =
   'iframe[src*="imasdk.googleapis"],iframe[src*="fwmrm.net"],' +
-  'iframe[src*="springserve"],iframe[src*="jwplayer"][src*="ad"]';
+  'iframe[src*="springserve"]';
 
 // ── Compilación de selectores ────────────────────────────────────────────────
 // Un querySelectorAll con la lista unida por comas en lugar de uno por
@@ -458,7 +459,18 @@ function isSafeToHide(el) {
 // El estado se marca en el propio nodo (data-sx) en lugar de guardarlo en un
 // Set: así no se retienen nodos eliminados en páginas de vida larga.
 //   data-sx="1" → oculto por ShieldX     data-sx="0" → visto y descartado
+const HIDE_PROPS = ['display', 'visibility', 'height', 'min-height', 'overflow'];
+const HIDE_STORE = new WeakMap();   // nodo -> estilos en línea que tenía antes
+
 function hide(el) {
+  // Se guarda lo que la página ya tenía en línea: restaurar borrando la
+  // propiedad se llevaba también el height/display originales del sitio.
+  if (!HIDE_STORE.has(el)) {
+    const st = el.style;
+    const leer = typeof st.getPropertyValue === 'function';
+    HIDE_STORE.set(el, HIDE_PROPS.map(p =>
+      [p, leer ? st.getPropertyValue(p) : '', leer ? st.getPropertyPriority(p) : '']));
+  }
   el.setAttribute('data-sx', '1');
   el.style.setProperty('display', 'none', 'important');
   el.style.setProperty('visibility', 'hidden', 'important');
@@ -467,15 +479,18 @@ function hide(el) {
   el.style.setProperty('overflow', 'hidden', 'important');
 }
 
+function unhide(el) {
+  const prev = HIDE_STORE.get(el);
+  for (const p of HIDE_PROPS) el.style.removeProperty(p);
+  if (prev) {
+    for (const [p, v, prio] of prev) if (v) el.style.setProperty(p, v, prio);
+    HIDE_STORE.delete(el);
+  }
+  el.removeAttribute('data-sx');
+}
+
 function restoreAll() {
-  document.querySelectorAll('[data-sx="1"]').forEach(el => {
-    el.style.removeProperty('display');
-    el.style.removeProperty('visibility');
-    el.style.removeProperty('height');
-    el.style.removeProperty('min-height');
-    el.style.removeProperty('overflow');
-    el.removeAttribute('data-sx');
-  });
+  document.querySelectorAll('[data-sx="1"]').forEach(unhide);
   document.querySelectorAll('[data-sx="0"]').forEach(el => el.removeAttribute('data-sx'));
 }
 
@@ -767,6 +782,9 @@ function paso(fn) {
 
 function runPasses() {
   scheduled = false;
+  // Una pasada ya programada puede disparar DESPUÉS de pausar o excluir el sitio:
+  // sin esta guardia reinyectaba el CSS y volvía a ocultar cosas con ShieldX apagado.
+  if (!isActive() || !started) return;
   lastRun = performance.now();
   // Una web puede reemplazar el documento entero con document.write (las de
   // descarga y streaming lo hacen a menudo): se lleva por delante la hoja de
@@ -967,12 +985,7 @@ function restoreCookieUI() {
   let n = 0;
   for (const el of nodes) {
     n++;
-    el.style.removeProperty('display');
-    el.style.removeProperty('visibility');
-    el.style.removeProperty('height');
-    el.style.removeProperty('min-height');
-    el.style.removeProperty('overflow');
-    el.removeAttribute('data-sx');
+    unhide(el);
     el.setAttribute('data-sx-cookie', '0');   // elección del usuario: no volver a tocarlo
   }
   return n;
@@ -992,8 +1005,18 @@ function skipUserInvoked(n) {
   } catch (_) {}
 }
 
+// Sitios donde el aviso de consentimiento es un MURO: hasta que se responde, la
+// página no funciona (YouTube no arranca el reproductor; Google no da
+// resultados). Ocultarlo no equivale a quitar un banner, deja la web muerta —
+// verificado en vivo con YouTube en un perfil sin consentimiento previo.
+function esMuroDeConsentimiento() {
+  return hostMatches('youtube.com') || hostMatches('youtube-nocookie.com') ||
+         IS_GOOGLE_SEARCH || /^consent\./.test(HOST);
+}
+
 function skipCookies() {
   if (!isActive() || !IS_TOP_FRAME) return;
+  if (esMuroDeConsentimiento()) return;
 
   const gestoReciente = recentGesture(1500) || Date.now() < cookieSettingsUntil;
 
@@ -1015,6 +1038,9 @@ function skipCookies() {
       if (s.position !== 'fixed' && s.position !== 'sticky' && s.position !== 'absolute') continue;
       const t = normalizeText(el.textContent);
       if (!COOKIE_TEXT.test(t) || t.length > 4000) continue;
+      // Un banner de cookies no pide contraseña ni correo: eso es un formulario.
+      try { if (el.querySelector('input[type="password"],input[type="email"],textarea')) continue; }
+      catch (_) {}
       if (gestoReciente) { skipUserInvoked(el); continue; }
       seen.add(el);
     }
