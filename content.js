@@ -1266,62 +1266,102 @@ const dlCola = [];             // { id, nombre, detalle } por orden de llegada
 let dlHost = null, dlRaiz = null, dlExpandido = false;
 
 const DL_CSS = `
+  /* Liquid Glass (Apple, 2025): vidrio claro que refracta lo que hay detrás
+     (backdrop-filter con un filtro SVG de desplazamiento #sx-lg + poco
+     desenfoque), filos de luz especulares, cápsulas de vidrio como botones y un
+     tinte rojo muy suave de aviso. Con "reducir transparencia" se vuelve opaco. */
   :host{all:initial}
   *{box-sizing:border-box}
-  .zona{position:fixed;top:18px;right:18px;width:352px;max-width:calc(100vw - 24px);
-    font:13px/1.38 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  .zona{position:fixed;top:16px;right:16px;width:360px;max-width:calc(100vw - 24px);
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;color:var(--tx);
-    --tx:#2a1415;--tx2:rgba(60,28,30,.66);--sep:rgba(120,30,30,.14);
-    --vidrio:rgba(255,246,245,.74);--borde:rgba(255,69,58,.28);--sombra:0 18px 50px rgba(120,20,20,.28),0 2px 8px rgba(0,0,0,.12);
-    --tonal:rgba(60,28,30,.08);--tonalH:rgba(60,28,30,.14);}
+    --tx:#2b1213;--tx2:rgba(58,22,24,.72);--sep:rgba(120,30,30,.16);
+    --tinte:rgba(255,246,245,.30);--tinte2:rgba(255,200,195,.16);
+    --brillo:rgba(255,255,255,.85);--brillo2:rgba(255,255,255,.28);
+    --sombra:0 24px 60px rgba(90,10,10,.24),0 6px 18px rgba(0,0,0,.10);
+    --tonal:rgba(255,255,255,.42);--tonalH:rgba(255,255,255,.62);--rojo:#e3241b;--rojoT:#c41a12}
   @media (prefers-color-scheme:dark){.zona{
-    --tx:#fdeeee;--tx2:rgba(255,226,224,.64);--sep:rgba(255,120,110,.16);
-    --vidrio:rgba(46,22,24,.70);--borde:rgba(255,99,88,.34);--sombra:0 20px 56px rgba(0,0,0,.6),0 2px 8px rgba(0,0,0,.4);
-    --tonal:rgba(255,255,255,.10);--tonalH:rgba(255,255,255,.17);}}
+    --tx:#fff1f0;--tx2:rgba(255,226,224,.74);--sep:rgba(255,140,130,.18);
+    --tinte:rgba(40,14,16,.38);--tinte2:rgba(255,80,70,.10);
+    --brillo:rgba(255,255,255,.38);--brillo2:rgba(255,255,255,.10);
+    --sombra:0 26px 64px rgba(0,0,0,.55),0 6px 18px rgba(0,0,0,.35);
+    --tonal:rgba(255,255,255,.12);--tonalH:rgba(255,255,255,.2);--rojo:#ff5449;--rojoT:#ffb4ab}}
+
   .mazo{position:relative}
-  .capa,.tarjeta,.lista{border-radius:20px;border:1px solid var(--borde);
-    background:var(--vidrio);-webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);
-    box-shadow:var(--sombra)}
-  .capa{position:absolute;left:0;right:0;top:0;height:100%;pointer-events:none;transition:transform .3s cubic-bezier(.2,.8,.2,1),opacity .3s}
-  .capa.c1{transform:translateY(9px) scale(.955);opacity:.78}
-  .capa.c2{transform:translateY(18px) scale(.91);opacity:.5}
-  .tarjeta{position:relative;padding:15px 16px 14px;animation:entra .42s cubic-bezier(.2,.9,.25,1.05) both}
+  .capa,.tarjeta,.lista{position:relative;border-radius:28px;isolation:isolate;
+    background:linear-gradient(160deg,var(--tinte2),transparent 55%),var(--tinte);
+    -webkit-backdrop-filter:blur(14px) saturate(190%);
+    backdrop-filter:blur(14px) saturate(190%);
+    backdrop-filter:url(#sx-lg) blur(5px) saturate(185%) brightness(1.06);
+    box-shadow:var(--sombra),
+      inset 0 1px 0 var(--brillo),            /* filo de luz superior */
+      inset 0 -1px 1px var(--brillo2),         /* reflejo inferior */
+      inset 1px 0 0 var(--brillo2), inset -1px 0 0 var(--brillo2),
+      inset 0 0 0 .5px rgba(255,255,255,.22)}
+  /* brillo especular: una luz curva arriba a la izquierda, como el cristal */
+  .capa::before,.tarjeta::before,.lista::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;
+    background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.55),rgba(255,255,255,0) 55%),
+               radial-gradient(80% 60% at 110% 120%,rgba(255,120,110,.18),rgba(255,120,110,0) 60%)}
+  @media (prefers-color-scheme:dark){.capa::before,.tarjeta::before,.lista::before{
+    background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.16),rgba(255,255,255,0) 55%),
+               radial-gradient(80% 60% at 110% 120%,rgba(255,84,73,.16),rgba(255,84,73,0) 60%)}}
+  @media (prefers-reduced-transparency:reduce){
+    .capa,.tarjeta,.lista{backdrop-filter:none;-webkit-backdrop-filter:none;background:#fff3f2}
+    @media (prefers-color-scheme:dark){.capa,.tarjeta,.lista{background:#2c1516}}}
+
+  .capa{position:absolute;left:0;right:0;top:0;height:100%;pointer-events:none;transition:transform .45s cubic-bezier(.34,1.56,.64,1),opacity .3s}
+  .capa.c1{transform:translateY(10px) scale(.95);opacity:.75}
+  .capa.c2{transform:translateY(20px) scale(.9);opacity:.45}
+  .tarjeta{padding:16px 16px 14px;animation:entra .55s cubic-bezier(.34,1.56,.64,1) both}
   .tarjeta.sale{animation:sale .22s ease-in both}
-  @keyframes entra{from{opacity:0;transform:translateX(26px) scale(.96)}to{opacity:1;transform:none}}
-  @keyframes sale{to{opacity:0;transform:translateX(18px) scale(.97)}}
+  @keyframes entra{from{opacity:0;transform:translateY(-14px) scale(.92)}to{opacity:1;transform:none}}
+  @keyframes sale{to{opacity:0;transform:translateY(-8px) scale(.96)}}
+
   .cab{display:flex;gap:12px;align-items:flex-start}
-  .ico{flex:none;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
-    background:linear-gradient(180deg,#ff6a5f,#ff3b30);box-shadow:0 3px 10px rgba(255,59,48,.45),inset 0 1px 0 rgba(255,255,255,.35)}
-  .ico svg{width:21px;height:21px}
+  .ico{flex:none;width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
+    background:linear-gradient(160deg,#ff6b5e,#d81b12);
+    box-shadow:0 6px 16px rgba(216,27,18,.38),inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(0,0,0,.12)}
+  .ico svg{width:22px;height:22px}
   .txt{min-width:0;flex:1}
-  .tit{margin:1px 0 0;font-weight:700;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#ff453a}
-  .nom{margin-top:3px;font-weight:700;font-size:16px;line-height:1.25;letter-spacing:-.01em;overflow-wrap:anywhere}
-  .det{margin-top:1px;color:var(--tx2);font-size:12px;white-space:pre-line;overflow-wrap:anywhere}
-  .acc{display:flex;gap:8px;margin-top:13px}
-  button{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;font-weight:600;font-size:13px;
-    border-radius:11px;padding:8px 12px;transition:background .15s,transform .1s,filter .15s}
-  button:focus-visible{outline:2px solid #ff453a;outline-offset:2px}
-  button:active{transform:scale(.97)}
+  .tit{margin:2px 0 0;font-weight:700;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--rojoT)}
+  .nom{margin-top:3px;font-weight:700;font-size:17px;line-height:1.22;letter-spacing:-.012em;overflow-wrap:anywhere;
+    text-shadow:0 1px 0 rgba(255,255,255,.25)}
+  @media (prefers-color-scheme:dark){.nom{text-shadow:none}}
+  .det{margin-top:2px;color:var(--tx2);font-size:12.5px;white-space:pre-line;overflow-wrap:anywhere}
+
+  .acc{display:flex;gap:8px;margin-top:14px}
+  button{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;font-weight:600;font-size:14px;letter-spacing:.005em;
+    border-radius:999px;padding:10px 16px;min-height:40px;display:inline-flex;align-items:center;justify-content:center;
+    transition:background .2s,transform .25s cubic-bezier(.34,1.56,.64,1),box-shadow .2s,filter .2s}
+  button:focus-visible{outline:2px solid var(--rojo);outline-offset:3px}
+  button:active{transform:scale(.95)}
   .acc button{flex:1}
-  .peligro{background:#ff3b30;color:#fff}.peligro:hover{filter:brightness(1.08)}
-  .tonal{background:var(--tonal);color:var(--tx)}.tonal:hover{background:var(--tonalH)}
-  .pie{display:flex;justify-content:space-between;align-items:center;margin-top:11px;padding-top:9px;border-top:1px solid var(--sep);color:var(--tx2);font-size:12px}
-  .enlace{color:#ff453a;font-weight:600;padding:2px 4px;margin:-2px -4px;border-radius:6px}
-  .enlace:hover{text-decoration:underline}
-  .lista{padding:6px 6px 8px;animation:entra .3s cubic-bezier(.2,.9,.25,1.05) both}
-  .lcab{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 12px}
-  .lcab b{font-weight:650;font-size:13.5px}
+  /* botón principal: lleno, como el filled button de M3 */
+  .peligro{background:linear-gradient(180deg,rgba(255,80,68,.92),rgba(214,30,20,.92));color:#fff;box-shadow:0 4px 14px rgba(227,36,27,.32),inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(0,0,0,.12)}
+  .peligro:hover{filter:brightness(1.07);box-shadow:0 6px 16px rgba(227,36,27,.42),inset 0 1px 0 rgba(255,255,255,.3)}
+  /* secundario: píldora de vidrio, como el tonal button */
+  .tonal{background:var(--tonal);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
+  .tonal:hover{background:var(--tonalH)}
+
+  .pie{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--sep);color:var(--tx2);font-size:12.5px}
+  .enlace{color:var(--rojoT);font-weight:600;min-height:0;padding:4px 10px;margin:-4px -10px;border-radius:999px;font-size:13px}
+  .enlace:hover{background:rgba(227,36,27,.10)}
+
+  .lista{padding:8px 8px 10px;animation:entra .45s cubic-bezier(.34,1.56,.64,1) both}
+  .lcab{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 14px}
+  .lcab b{font-weight:700;font-size:14.5px}
   .filas{max-height:min(46vh,320px);overflow:auto;scrollbar-width:thin}
-  .fila{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:12px}
-  .fila+.fila{border-top:1px solid var(--sep);border-radius:0}
-  .fila .txt{flex:1}.fila .nom{font-size:14px;font-weight:700;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fila{display:flex;align-items:center;gap:10px;padding:10px 10px 10px 14px;border-radius:20px;transition:background .2s}
+  .fila:hover{background:rgba(255,255,255,.16)}
+  .fila+.fila{margin-top:2px}
+  .fila .txt{flex:1}.fila .nom{font-size:14.5px;font-weight:700;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fila .det{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .mini{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:15px;padding:0}
-  .mini.si{background:var(--tonal);color:var(--tx)}.mini.si:hover{background:var(--tonalH)}
-  .mini.no{background:#ff3b30;color:#fff}.mini.no:hover{filter:brightness(1.08)}
-  .lpie{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px 2px}
+  .mini{flex:none;width:36px;height:36px;min-height:36px;border-radius:50%;padding:0;font-size:16px}
+  .mini.si{background:var(--tonal);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.si:hover{background:var(--tonalH)}
+  .mini.no{background:var(--rojo);color:#fff;box-shadow:0 3px 10px rgba(227,36,27,.32)}.mini.no:hover{filter:brightness(1.07)}
+  .lpie{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px 4px}
   .todas{display:flex;gap:14px;flex:none}
-  .enlace.suave{color:var(--tx);opacity:.8}.enlace.suave:hover{opacity:1}
+  .enlace.suave{color:var(--tx)}.enlace.suave:hover{background:rgba(255,255,255,.2)}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
@@ -1369,6 +1409,24 @@ function dlAsegurarZona() {
   const css = document.createElement('style');
   css.textContent = DL_CSS;
   dlRaiz.append(css);
+  // Refracción tipo Liquid Glass: ruido suave que desplaza lo que hay detrás del vidrio.
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '0'); svg.setAttribute('height', '0');
+  svg.setAttribute('style', 'position:absolute;width:0;height:0');
+  svg.setAttribute('aria-hidden', 'true');
+  const f = document.createElementNS(NS, 'filter');
+  f.setAttribute('id', 'sx-lg'); f.setAttribute('x', '0%'); f.setAttribute('y', '0%');
+  f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
+  const turb = document.createElementNS(NS, 'feTurbulence');
+  turb.setAttribute('type', 'fractalNoise'); turb.setAttribute('baseFrequency', '0.008 0.012');
+  turb.setAttribute('numOctaves', '2'); turb.setAttribute('seed', '7'); turb.setAttribute('result', 'ruido');
+  const suave = document.createElementNS(NS, 'feGaussianBlur');
+  suave.setAttribute('in', 'ruido'); suave.setAttribute('stdDeviation', '2'); suave.setAttribute('result', 'mapa');
+  const desp = document.createElementNS(NS, 'feDisplacementMap');
+  desp.setAttribute('in', 'SourceGraphic'); desp.setAttribute('in2', 'mapa');
+  desp.setAttribute('scale', '38'); desp.setAttribute('xChannelSelector', 'R'); desp.setAttribute('yChannelSelector', 'G');
+  f.append(turb, suave, desp); svg.append(f); dlRaiz.append(svg);
   (document.documentElement || document.body).appendChild(dlHost);
 }
 

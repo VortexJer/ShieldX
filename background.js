@@ -222,7 +222,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (tabId === undefined && !desdePopup) return;
     if (msg.type === 'DL_LIST') {
       hidratar(() => {
-        const vivas = [...retenidas.values()].filter(r => !r.decidida);
+        const origenTab = sender.tab ? originOf(sender.tab.url || '') : null;
+        const vivas = [...retenidas.values()].filter(r => !r.decidida &&
+          (origenTab === null || !r.origen || r.origen === origenTab));
         // Si lo pide una página, esa página mostrará el aviso: que se cierre allí al decidir.
         if (tabId !== undefined) vivas.forEach(r => r.tabs.add(tabId));
         sendResponse({ lista: vivas.map(r => ({ id: r.gid, nombre: r.nombre, detalle: r.detalle, estado: r.estado, origen: r.origen || '' })) });
@@ -728,10 +730,13 @@ function mostrarAviso(downloadId, intento = 0) {
       const web = (t) => t && t.id !== undefined && /^(https?|file):/i.test(t.url || '');
       const orden = [];
       const meter = (t) => { if (web(t) && !orden.some(x => x.id === t.id)) orden.push(t); };
-      todas.filter(t => r.origen && originOf(t.url || '') === r.origen).sort((x, y) => (y.active - x.active)).forEach(meter);
-      todas.filter(t => t.active && t.windowId === winId).forEach(meter);
-      todas.filter(t => t.active).forEach(meter);
-      if (intento >= 3) todas.forEach(meter);   // ya en los últimos intentos: cualquier pestaña web
+      // Cada aviso, en las pestañas de SU dominio. Solo si no hay ninguna abierta
+      // (o no se sabe el origen) va a la pestaña que estás mirando.
+      todas.filter(t => r.origen && originOf(t.url || '') === r.origen).forEach(meter);
+      if (!orden.length) {
+        todas.filter(t => t.active && t.windowId === winId).forEach(meter);
+        if (intento >= 3) todas.filter(t => t.active).forEach(meter);
+      }
       // Chrome no dice de qué pestaña salió una descarga por navegación: se muestra
       // en TODAS las del mismo sitio y en la que estás mirando. Al decidir en una,
       // se cierra en todas (DL_CLOSE a r.tabs).
@@ -756,14 +761,22 @@ function mostrarAviso(downloadId, intento = 0) {
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId, (tab) => {
+    void chrome.runtime.lastError;
+    if (tab) avisosAlActivar(tabId, originOf(tab.url || ''));
+  });
+});
+
+function avisosAlActivar(tabId, origenTab) {
   for (const [id, r] of retenidas) {
-    if (r.tabs.has(tabId) || r.notifId) continue;
+    if (r.tabs.has(tabId) || r.notifId || r.decidida) continue;
+    if (r.origen && r.origen !== origenTab) continue;   // de otro dominio: no aquí
     chrome.tabs.sendMessage(tabId, { type: 'DL_PROMPT', id, nombre: r.nombre, detalle: r.detalle, origen: r.origen || '' }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.ok) return;
       r.tabs.add(tabId);
     });
   }
-});
+}
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   chrome.storage.local.get(['enabled', 'downloadGuard'], (data) => {
