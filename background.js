@@ -225,7 +225,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const vivas = [...retenidas.values()].filter(r => !r.decidida);
         // Si lo pide una página, esa página mostrará el aviso: que se cierre allí al decidir.
         if (tabId !== undefined) vivas.forEach(r => r.tabs.add(tabId));
-        sendResponse({ lista: vivas.map(r => ({ id: r.gid, nombre: r.nombre, detalle: r.detalle, estado: r.estado })) });
+        sendResponse({ lista: vivas.map(r => ({ id: r.gid, nombre: r.nombre, detalle: r.detalle, estado: r.estado, origen: r.origen || '' })) });
       });
       return true;   // respuesta asíncrona
     }
@@ -745,7 +745,7 @@ function mostrarAviso(downloadId, intento = 0) {
       };
       if (!orden.length) { pendientes = 1; fin(); return; }
       for (const tab of orden) {
-        chrome.tabs.sendMessage(tab.id, { type: 'DL_PROMPT', id: downloadId, nombre: r.nombre, detalle: r.detalle }, (resp) => {
+        chrome.tabs.sendMessage(tab.id, { type: 'DL_PROMPT', id: downloadId, nombre: r.nombre, detalle: r.detalle, origen: r.origen || '' }, (resp) => {
           if (!chrome.runtime.lastError && resp && resp.ok) r.tabs.add(tab.id);
           void chrome.runtime.lastError;
           fin();
@@ -758,7 +758,7 @@ function mostrarAviso(downloadId, intento = 0) {
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   for (const [id, r] of retenidas) {
     if (r.tabs.has(tabId) || r.notifId) continue;
-    chrome.tabs.sendMessage(tabId, { type: 'DL_PROMPT', id, nombre: r.nombre, detalle: r.detalle }, (resp) => {
+    chrome.tabs.sendMessage(tabId, { type: 'DL_PROMPT', id, nombre: r.nombre, detalle: r.detalle, origen: r.origen || '' }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.ok) return;
       r.tabs.add(tabId);
     });
