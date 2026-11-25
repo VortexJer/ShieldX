@@ -12,7 +12,7 @@
 
 const VALID_MSG_TYPES = new Set([
   'BLOCKED', 'COOKIE_BLOCKED', 'GET_STATS', 'SET_SITE', 'RESET_STATS',
-  'GESTURE', 'GUARD_BLOCKED', 'SYNC_RULES'
+  'GESTURE', 'GUARD_BLOCKED', 'SYNC_RULES', 'DL_DECISION', 'DL_LIST'
 ]);
 
 const DEFAULTS = {
@@ -216,6 +216,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   const tabId = sender.tab && sender.tab.id;
 
+  if (msg.type === 'DL_DECISION' || msg.type === 'DL_LIST') {
+    // Solo desde una pestaña real (script de contenido) o desde el popup de la extensión.
+    const desdePopup = typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL('popup.html'));
+    if (tabId === undefined && !desdePopup) return;
+    if (msg.type === 'DL_LIST') {
+      hidratar(() => {
+        const origenTab = sender.tab ? originOf(sender.tab.url || '') : null;
+        const vivas = [...retenidas.values()].filter(r => !r.decidida &&
+          (origenTab === null || !r.origen || r.origen === origenTab));
+        // Si lo pide una página, esa página mostrará el aviso: que se cierre allí al decidir.
+        if (tabId !== undefined) vivas.forEach(r => r.tabs.add(tabId));
+        sendResponse({ lista: vivas.map(r => ({ id: r.gid, nombre: r.nombre, detalle: r.detalle, estado: r.estado, origen: r.origen || '' })) });
+      });
+      return true;   // respuesta asíncrona
+    }
+    if (typeof msg.id !== 'string') return;
+    soltar(msg.id, msg.permitir === true);
+    return;
+  }
+
   if (msg.type === 'BLOCKED') {
     const delta = msg.delta;
     if (typeof delta !== 'number' || !Number.isFinite(delta) ||
@@ -337,23 +357,44 @@ function pestanasDeOrigen(item, tabs) {
 }
 
 function askedByUser(item, tabs) {
+  // Lo que entrega la propia ShieldX tras pulsar Permitir.
+  if (nombreEntrega(item)) return true;
+  if (item.byExtensionId === chrome.runtime.id) return true;
+  // Un archivo local (file://) nunca es una descarga que llegue de fuera.
+  if (/^file:/i.test(item.finalUrl || item.url || '')) return true;
   // Otra extensión (gestor de descargas, exportador…) la pide a propósito.
   if (item.byExtensionId) return true;
   // Sin pestaña asociada (Guardar como… de la propia interfaz de Chrome).
   if (typeof item.tabId === 'number' && item.tabId < 0) return true;
 
   const reciente = (t) => t && Date.now() - t < GESTURE_WINDOW;
+
+  // Descarga generada por la propia página (blob:): la URL lleva el dominio de
+  // quien la creó. Solo vale un clic real en una pestaña de ESE dominio; si no
+  // hay ninguna abierta, no hay quien la haya pedido.
+  const u = item.finalUrl || item.url || '';
+  if (u.startsWith('blob:')) {
+    const dueno = originOf(u);
+    const delDueno = (tabs || []).filter(t => t.url && originOf(t.url) === dueno).map(t => t.id);
+    return delDueno.some(id => reciente(lastGesture.get(id)));
+  }
+
   const candidatas = pestanasDeOrigen(item, tabs || []);
   // El clic tiene que ser en la pestaña de la que sale la descarga: un clic en
   // otra pestaña no autoriza lo que una pestaña de fondo se descarga sola.
   if (candidatas.length) return candidatas.some(id => reciente(lastGesture.get(id)));
-  // Sin pista de origen (URL directa, referrer vacío): cualquier clic reciente.
-  return [...lastGesture.values()].some(reciente);
+  // Sin referrer: vale solo un clic reciente en una pestaña del MISMO sitio que la
+  // descarga. Antes valía un clic en cualquier pestaña, y así una página de fondo
+  // colaba descargas mientras el usuario hacía clic en otra.
+  const sitio = originOf(item.finalUrl || item.url || '');
+  if (!sitio) return false;
+  const delSitio = (tabs || []).filter(t => t.url && originOf(t.url) === sitio).map(t => t.id);
+  return delSitio.some(id => reciente(lastGesture.get(id)));
 }
 
 function describe(item) {
   let origen = '';
-  try { origen = new URL(item.finalUrl || item.url || '').hostname; } catch (_) {}
+  try { const u = new URL(item.finalUrl || item.url || ''); origen = u.hostname || (u.protocol === 'blob:' ? new URL(u.pathname).hostname : ''); } catch (_) {}
   const nombre = (item.filename || '').split(/[\\/]/).pop() || '(sin nombre)';
   const tam = item.fileSize > 0
     ? ` · ${(item.fileSize / 1048576).toFixed(1)} MB`
@@ -361,59 +402,443 @@ function describe(item) {
   return { nombre, cuerpo: `${nombre}${tam}\nDesde: ${origen || 'origen desconocido'}` };
 }
 
-chrome.downloads.onCreated.addListener((item) => {
-  chrome.storage.local.get(['enabled', 'downloadGuard'], (data) => {
-    if (data.enabled === false || data.downloadGuard === false) return;
-    chrome.tabs.query({}, (tabs) => {
+// Registro de diagnóstico (últimas 50) y filtros contra avisos por descargas
+// que no son nuevas ni distintas.
+
+const dlLogMem = [];
+function registrar(item, motivo) {
+  dlLogMem.push({ t: new Date().toISOString(), motivo, id: item.id, start: item.startTime,
+    url: (item.finalUrl || item.url || '').slice(0, 200), ref: (item.referrer || '').slice(0, 200),
+    file: item.filename, ext: item.byExtensionId, estado: item.state });
+  if (dlLogMem.length > 50) dlLogMem.shift();
+  chrome.storage.local.set({ dlLog: dlLogMem });
+}
+
+// ── Guardián de descargas ────────────────────────────────────────────────────
+// Una descarga que el usuario no pidió se deja bajar UNA vez a una carpeta de
+// cuarentena (Descargas\ShieldX-cuarentena\nombre.ext.bloqueado). El programa
+// auxiliar (ShieldX Guard, native messaging) vigila el archivo temporal mientras
+// Chrome lo escribe y lo DESORDENA en vivo: nunca llega entero y utilizable a
+// disco. Al confirmar, lo restaura y lo entrega; al rechazar, lo borra.
+// Sin el auxiliar, queda el nombre inerte .bloqueado y la entrega por file://.
+const retenidas = new Map();     // gid -> { gid, dlId, nombre, detalle, cuerpo, tabs, notifId, timer, estado, pendiente }
+const porDescarga = new Map();   // id de Chrome -> gid
+const esperando = new Map();     // id de Chrome -> callback cuando termine
+const CUARENTENA = 'ShieldX-temp';   // subcarpeta (oculta) de la carpeta de descargas de Chrome: solo mientras baja
+const SUFIJO = '.bloqueado';
+const RETENCION_MAX = 24 * 60 * 60 * 1000;   // un día: luego se rechaza solo
+const HOST_GUARDIA = 'com.shieldx.guard';
+let keepAlive = null;
+
+// ── Conexión con el programa auxiliar ────────────────────────────────────────
+let puerto = null;
+let rid = 0;
+const respuestas = new Map();
+
+function conectarGuardia() {
+  if (puerto) return puerto;
+  try {
+    puerto = chrome.runtime.connectNative(HOST_GUARDIA);
+  } catch (_) { puerto = null; return null; }
+  puerto.onMessage.addListener((m) => {
+    const cb = respuestas.get(m && m.rid);
+    if (cb) { respuestas.delete(m.rid); cb(m); }
+  });
+  puerto.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    puerto = null;
+    for (const [, cb] of respuestas) cb({ ok: false, error: 'auxiliar desconectado' });
+    respuestas.clear();
+ 
+    setTimeout(() => conectarGuardia(), 500);   // se reconecta solo: que esté siempre en marcha
+  });
+  return puerto;
+}
+
+function guardia(msg, cb) {
+  const p = conectarGuardia();
+
+  if (!p) { cb({ ok: false, error: 'sin auxiliar' }); return; }
+  const n = ++rid;
+  const t = setTimeout(() => { if (respuestas.delete(n)) cb({ ok: false, error: 'sin respuesta' }); }, 15000);
+  respuestas.set(n, (m) => { clearTimeout(t); cb(m); });
+  try { p.postMessage(Object.assign({}, msg, { rid: n })); }
+  catch (e) { clearTimeout(t); respuestas.delete(n); cb({ ok: false, error: String(e) }); }
+}
+
+// Se conecta ya, al arrancar el service worker: así el auxiliar está en marcha
+// (y vigilando) antes de que llegue la primera descarga.
+conectarGuardia();
+
+// ── Burbuja de descargas de Chrome ───────────────────────────────────────────
+// Oculta por defecto: así una descarga no pedida no llega a animarse (Chrome la
+// pinta al crearla, antes de que ShieldX decida). Se muestra solo para lo que el
+// usuario sí pidió y se vuelve a ocultar al rato.
+let uiTimer = null;
+let uiError = '';
+function uiDescargas(visible) {
+  // Nunca debe poder romper el guardián: cualquier fallo se anota y se sigue.
+  try {
+    if (!chrome.downloads.setUiOptions) { uiError = 'setUiOptions no disponible'; return; }
+    chrome.downloads.setUiOptions({ enabled: visible }, () => {
+      if (chrome.runtime.lastError) uiError = chrome.runtime.lastError.message;
+    });
+  } catch (e) { uiError = String(e && e.message || e); }
+}
+function uiMostrarUnRato() {
+  uiDescargas(true);
+  clearTimeout(uiTimer);
+  uiTimer = setTimeout(() => uiDescargas(false), 8000);
+}
+chrome.storage.local.get(['enabled', 'downloadGuard'], (d) => {
+  uiDescargas(d.enabled === false || d.downloadGuard === false);
+});
+
+function mantenerVivo() {
+  if (retenidas.size && !keepAlive) {
+    // Un service worker MV3 se duerme a los ~30 s: sin esto perdería la decisión.
+    keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError), 20000);
+  } else if (!retenidas.size && keepAlive) {
+    clearInterval(keepAlive); keepAlive = null;
+  }
+}
+
+// Mensaje corto dentro de la página activa; si no hay ninguna que lo admita, del sistema.
+function avisoFallo(texto) {
+  const sistema = () => chrome.notifications.create({
+    type: 'basic', iconUrl: 'icons/icon128.png', title: 'ShieldX', message: texto,
+  }, () => void chrome.runtime.lastError);
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (activas) => {
+    void chrome.runtime.lastError;
+    const tab = (activas || [])[0];
+    if (!tab || tab.id === undefined) { sistema(); return; }
+    chrome.tabs.sendMessage(tab.id, { type: 'DL_TOAST', texto }, (resp) => {
+      if (chrome.runtime.lastError || !resp || !resp.ok) sistema();
+    });
+  });
+}
+
+// Llama a cb(item) cuando la descarga ha terminado (o cb(null) si se interrumpió).
+function cuandoCompleta(id, cb) {
+  chrome.downloads.search({ id }, (res) => {
+    void chrome.runtime.lastError;
+    const it = res && res[0];
+    if (!it || it.state === 'interrupted') { cb(null); return; }
+    if (it.state === 'complete') { cb(it); return; }
+    esperando.set(id, cb);
+  });
+}
+
+chrome.downloads.onChanged.addListener((d) => {
+  if (porDescarga.has(d.id) && (d.error || d.state || d.filename)) {
+    registrar({ id: d.id, filename: d.filename && d.filename.current, state: d.state && d.state.current },
+      'cambio: ' + JSON.stringify({ error: d.error && d.error.current, state: d.state && d.state.current, filename: d.filename && d.filename.current }));
+  }
+  // Chrome acaba de fijar la ruta real: el auxiliar vigila ESA carpeta (sea cual sea
+  // la carpeta de descargas de Chrome), antes de que el archivo crezca.
+  if (d.filename && d.filename.current && porDescarga.has(d.id)) {
+    const ruta = d.filename.current;
+    const dir = ruta.slice(0, Math.max(ruta.lastIndexOf('\\'), ruta.lastIndexOf('/')));
+    if (dir) guardia({ cmd: 'vigilar', dir }, () => {});
+  }
+  if (!d.state) return;
+  if (d.state.current === 'complete') alCompletar(d.id);
+  const cb = esperando.get(d.id);
+  if (!cb) return;
+  if (d.state.current === 'complete') {
+    esperando.delete(d.id);
+    chrome.downloads.search({ id: d.id }, (res) => { void chrome.runtime.lastError; cb((res && res[0]) || null); });
+  } else if (d.state.current === 'interrupted') {
+    esperando.delete(d.id);
+    cb(null);
+  }
+});
+
+function borrarDescarga(id) {
+  chrome.downloads.cancel(id, () => {
+    void chrome.runtime.lastError;
+    chrome.downloads.removeFile(id, () => {
       void chrome.runtime.lastError;
-      if (askedByUser(item, tabs)) return;
+      chrome.downloads.erase({ id }, () => void chrome.runtime.lastError);
+    });
+  });
+}
 
-      chrome.downloads.pause(item.id, () => {
-        // Un fichero pequeño puede haber terminado antes de poder pausarlo: se
-        // avisa igualmente, y "Cancelar y borrar" lo elimina del disco.
-        const yaTerminada = !!chrome.runtime.lastError || item.state !== 'in_progress';
-        void chrome.runtime.lastError;
+// Entregas propias: al pulsar Permitir, ShieldX crea una descarga nueva desde el
+// archivo restaurado. El guardián NO debe tomarla por una descarga no pedida.
+const entregando = new Map();   // url normalizada -> nombre real con el que entregarla
+function claveUrl(u) {
+  try { return decodeURIComponent(String(u || '')).split('\\').join('/').toLowerCase(); } catch (_) { return String(u || '').toLowerCase(); }
+}
+function nombreEntrega(item) {
+  if (typeof entregando === 'undefined') return null;
+  return entregando.get(claveUrl(item.url)) || entregando.get(claveUrl(item.finalUrl)) || null;
+}
+function descargarPropia(url, nombre, cb) {
+  const k = claveUrl(url);
+  entregando.set(k, nombre);
+  setTimeout(() => entregando.delete(k), 120000);
+  chrome.downloads.download({ url, filename: nombre, conflictAction: 'uniquify' }, cb);
+}
 
-        const { cuerpo } = describe(item);
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: 'icons/icon128.png',
-          title: yaTerminada
-            ? 'ShieldX: se descargó un archivo que no pediste'
-            : 'ShieldX ha parado una descarga que no pediste',
-          message: cuerpo,
-          requireInteraction: true,
-          buttons: [{ title: yaTerminada ? 'Conservar' : 'Permitir' },
-                    { title: 'Cancelar y borrar' }]
-        }, (notificationId) => {
-          if (chrome.runtime.lastError || !notificationId) {
-            // Sin notificación no se puede preguntar: ante la duda, se cancela.
-            chrome.downloads.cancel(item.id, () => void chrome.runtime.lastError);
-            return;
-          }
-          pendingDownloads.set(notificationId, item.id);
-        });
+function aUrlArchivo(ruta) {
+  return 'file:///' + ruta.replace(/\\/g, '/').split('/')
+    .map((s, i) => (i === 0 ? s : encodeURIComponent(s))).join('/');
+}
+
+// Chrome acaba de terminar la descarga: el auxiliar remata el desordenado (lo que
+// faltaba: el final del archivo) y se oculta de la lista de descargas de Chrome.
+function alCompletar(dlId) {
+  const gid = porDescarga.get(dlId);
+  const r = gid && retenidas.get(gid);
+  if (!r || r.estado !== 'bajando') return;
+  r.estado = 'desordenando';
+  chrome.downloads.search({ id: dlId }, (res) => {
+    void chrome.runtime.lastError;
+    const it = res && res[0];
+    const terminar = (ok) => {
+      r.estado = ok ? 'desordenado' : 'sinauxiliar';
+      porDescarga.delete(dlId);
+      if (ok) chrome.downloads.erase({ id: dlId }, () => void chrome.runtime.lastError);
+      if (r.pendiente) {
+        const que = r.pendiente; r.pendiente = null;
+        retenidas.delete(r.gid); mantenerVivo();
+        ejecutar(r, que === 'permitir');
+      }
+    };
+    if (!it || !it.filename) { terminar(false); return; }
+    guardia({ cmd: 'desordenar', id: r.gid, path: it.filename, nombre: r.nombre, origen: r.origen || '' }, (m) => terminar(!!(m && m.ok)));
+  });
+}
+
+// ── Entrega ────────────────────────────────────────────────────────────────
+// Con el auxiliar: restaurar; copiar con su nombre real para que aparezca como
+// una descarga de Chrome (necesita "Permitir acceso a URL de archivo"); si no se
+// puede, el auxiliar lo mueve a Descargas.
+function entregarGuardia(r) {
+  // El auxiliar lo deja con su nombre real: Chrome no deja renombrar una descarga
+  // file://, así que el nombre bueno tiene que ir ya en la propia URL.
+  guardia({ cmd: 'restaurar', id: r.gid, nombre: r.nombre }, (m) => {
+    if (!m || !m.ok) { avisoFallo('No se pudo restaurar el archivo: ' + ((m && m.error) || 'sin respuesta')); return; }
+    const moverDirecto = () => guardia({ cmd: 'mover', id: r.gid, nombre: r.nombre }, (x) => {
+      avisoFallo(x && x.ok ? 'Entregado en Descargas: ' + x.nombre : 'No se pudo entregar: ' + ((x && x.error) || ''));
+    });
+    descargarPropia(aUrlArchivo(m.path), r.nombre, (nuevoId) => {
+      if (chrome.runtime.lastError || nuevoId === undefined) { void chrome.runtime.lastError; moverDirecto(); return; }
+      cuandoCompleta(nuevoId, (ok) => {
+        if (!ok) { borrarDescarga(nuevoId); moverDirecto(); return; }
+        guardia({ cmd: 'borrar', id: r.gid }, () => {});   // la copia buena ya está entregada
       });
     });
   });
+}
+
+// Sin auxiliar: el archivo está en cuarentena con nombre inerte y registrado en Chrome.
+function entregarSinGuardia(r) {
+  const quedaEnCuarentena = () => {
+    chrome.downloads.show(r.dlId);
+    avisoFallo('Se ha dejado en Descargas\\' + CUARENTENA + ' como "' + r.nombre + SUFIJO + '". Quítale "' + SUFIJO + '" para usarlo.');
+  };
+  cuandoCompleta(r.dlId, (it) => {
+    if (!it || !it.filename) { avisoFallo('La descarga no llegó a completarse.'); return; }
+    descargarPropia(aUrlArchivo(it.filename), r.nombre, (nuevoId) => {
+      if (chrome.runtime.lastError || nuevoId === undefined) { void chrome.runtime.lastError; quedaEnCuarentena(); return; }
+      cuandoCompleta(nuevoId, (ok) => {
+        if (!ok) { borrarDescarga(nuevoId); quedaEnCuarentena(); return; }
+        borrarDescarga(r.dlId);
+      });
+    });
+  });
+}
+
+function ejecutar(r, permitir) {
+  if (r.estado === 'sinauxiliar') {
+    if (permitir) entregarSinGuardia(r); else borrarDescarga(r.dlId);
+    return;
+  }
+  if (permitir) entregarGuardia(r);
+  else guardia({ cmd: 'borrar', id: r.gid }, () => {});
+}
+
+function soltar(gid, permitir) {
+  const r = retenidas.get(gid);
+  if (!r || r.decidida) return;
+  r.decidida = true;
+  clearTimeout(r.timer);
+  for (const t of r.tabs) chrome.tabs.sendMessage(t, { type: 'DL_CLOSE', id: gid }, () => void chrome.runtime.lastError);
+  if (r.notifId) { pendingDownloads.delete(r.notifId); chrome.notifications.clear(r.notifId); }
+  r.tabs.clear();
+  if (r.estado === 'bajando') {
+    // Aún está bajando: rechazar = cancelar ya; permitir = se ejecuta al terminar.
+    if (!permitir) {
+      retenidas.delete(gid); porDescarga.delete(r.dlId); mantenerVivo();
+      borrarDescarga(r.dlId);
+      guardia({ cmd: 'borrar', id: gid }, () => {});
+    } else {
+      r.pendiente = 'permitir';
+    }
+    return;
+  }
+  if (r.estado === 'desordenando') { r.pendiente = permitir ? 'permitir' : 'rechazar'; return; }
+  retenidas.delete(gid); mantenerVivo();
+  ejecutar(r, permitir);
+}
+
+// Recupera de disco las descargas que quedaron pendientes (Chrome cerrado, PC apagado).
+function hidratar(cb) {
+  guardia({ cmd: 'listar' }, (m) => {
+    if (m && m.ok) {
+      for (const p of m.pendientes || []) {
+        if (!p.desordenado || retenidas.has(p.id)) continue;
+        retenidas.set(p.id, { gid: p.id, dlId: null, nombre: p.nombre || 'archivo', origen: p.origen || '',
+          detalle: p.origen ? 'Desde: ' + p.origen.replace(/^https?:\/\//, '') + ' · bloqueada antes' : 'Bloqueada anteriormente',
+          cuerpo: '', tabs: new Set(), notifId: null, timer: null, estado: 'desordenado', pendiente: null });
+      }
+      mantenerVivo();
+    }
+    if (cb) cb();
+  });
+}
+setTimeout(() => hidratar(), 1500);
+
+// Muestra el aviso dentro de la pestaña activa (recuadro en la página). Si esa
+// pestaña no admite scripts (chrome://, tienda…), cae a una notificación del
+// sistema para no dejar la descarga sin pregunta.
+function mostrarAviso(downloadId, intento = 0) {
+  const r = retenidas.get(downloadId);
+  if (!r || r.decidida || r.tabs.size) return;
+  const caer = () => {
+    if (!retenidas.has(downloadId) || r.notifId || r.tabs.size) return;
+    chrome.notifications.create({
+      type: 'basic', iconUrl: 'icons/icon128.png',
+      title: 'ShieldX ha bloqueado una descarga que no pediste',
+      message: r.cuerpo, requireInteraction: true,
+      buttons: [{ title: 'Permitir' }, { title: 'Cancelar y borrar' }]
+    }, (nid) => {
+      if (chrome.runtime.lastError || !nid) return;   // sigue en "Descargas pendientes" del panel
+      r.notifId = nid;
+      pendingDownloads.set(nid, downloadId);
+    });
+  };
+  // Orden: la pestaña de donde salió la descarga, la activa de la ventana en uso,
+  // y las activas del resto de ventanas. Solo si ninguna página lo admite, aviso del sistema.
+  chrome.tabs.query({}, (todas) => {
+    void chrome.runtime.lastError;
+    todas = todas || [];
+    chrome.windows.getLastFocused({}, (win) => {
+      void chrome.runtime.lastError;
+      const winId = win && win.id;
+      const web = (t) => t && t.id !== undefined && /^(https?|file):/i.test(t.url || '');
+      const orden = [];
+      const meter = (t) => { if (web(t) && !orden.some(x => x.id === t.id)) orden.push(t); };
+      // Cada aviso, en las pestañas de SU dominio. Solo si no hay ninguna abierta
+      // (o no se sabe el origen) va a la pestaña que estás mirando.
+      todas.filter(t => r.origen && originOf(t.url || '') === r.origen).forEach(meter);
+      if (!orden.length) {
+        todas.filter(t => t.active && t.windowId === winId).forEach(meter);
+        if (intento >= 3) todas.filter(t => t.active).forEach(meter);
+      }
+      // Chrome no dice de qué pestaña salió una descarga por navegación: se muestra
+      // en TODAS las del mismo sitio y en la que estás mirando. Al decidir en una,
+      // se cierra en todas (DL_CLOSE a r.tabs).
+      let pendientes = orden.length;
+      const fin = () => {
+        if (--pendientes > 0) return;
+        if (r.tabs.size || r.decidida || !retenidas.has(downloadId)) return;
+        // Nadie lo admitió (pestaña a mitad de navegación, páginas de Chrome…): reintento.
+        if (intento < 5) setTimeout(() => mostrarAviso(downloadId, intento + 1), 600);
+        else caer();
+      };
+      if (!orden.length) { pendientes = 1; fin(); return; }
+      for (const tab of orden) {
+        chrome.tabs.sendMessage(tab.id, { type: 'DL_PROMPT', id: downloadId, nombre: r.nombre, detalle: r.detalle, origen: r.origen || '' }, (resp) => {
+          if (!chrome.runtime.lastError && resp && resp.ok) r.tabs.add(tab.id);
+          void chrome.runtime.lastError;
+          fin();
+        });
+      }
+    });
+  });
+}
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId, (tab) => {
+    void chrome.runtime.lastError;
+    if (tab) avisosAlActivar(tabId, originOf(tab.url || ''));
+  });
 });
+
+function avisosAlActivar(tabId, origenTab) {
+  for (const [id, r] of retenidas) {
+    if (r.tabs.has(tabId) || r.notifId || r.decidida) continue;
+    if (r.origen && r.origen !== origenTab) continue;   // de otro dominio: no aquí
+    chrome.tabs.sendMessage(tabId, { type: 'DL_PROMPT', id, nombre: r.nombre, detalle: r.detalle, origen: r.origen || '' }, (resp) => {
+      if (chrome.runtime.lastError || !resp || !resp.ok) return;
+      r.tabs.add(tabId);
+    });
+  }
+}
+
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  chrome.storage.local.get(['enabled', 'downloadGuard'], (data) => {
+    if (data.enabled === false || data.downloadGuard === false) {
+      const propia = nombreEntrega(item);
+      if (propia) suggest({ filename: propia, conflictAction: 'uniquify' }); else suggest();
+      return;
+    }
+    chrome.tabs.query({}, (tabs) => {
+      void chrome.runtime.lastError;
+      try {
+        decidirDescarga(item, suggest, tabs);
+      } catch (e) {
+        // Un fallo interno nunca debe dejar pasar la descarga: a la carpeta virtual.
+        registrar(item, 'ERROR del guardián: ' + String(e && e.stack || e).slice(0, 300));
+        try { suggest({ filename: CUARENTENA + '/' + describe(item).nombre.replace(/[\\/:*?"<>|]/g, '_'), conflictAction: 'uniquify' }); } catch (_) {}
+      }
+    });
+  });
+  return true;   // respuesta asíncrona: suggest() se llama arriba
+});
+
+function decidirDescarga(item, suggest, tabs) {
+  {
+    {
+      const pedida = askedByUser(item, tabs);
+      const edades = [...lastGesture.entries()].map(([t, ts]) => t + ':' + Math.round((Date.now() - ts) / 1000) + 's').join(',');
+      registrar(item, 'entrada: pedidaPorUsuario=' + pedida + ' gestos=[' + edades + ']');
+      const propia = nombreEntrega(item);
+      if (propia) registrar(item, 'entrega propia: ' + propia);
+      if (propia) { uiMostrarUnRato(); suggest({ filename: propia, conflictAction: 'uniquify' }); return; }
+      if (pedida) { uiMostrarUnRato(); suggest(); return; }
+      clearTimeout(uiTimer); uiDescargas(false);   // por si estaba visible: que esta no se anime
+
+      // No la pidió el usuario: baja una sola vez, a cuarentena y con nombre inerte;
+      // el auxiliar empieza a vigilar la carpeta ANTES de que Chrome escriba nada.
+      const d = describe(item);
+      const seguro = d.nombre.replace(/[\\/:*?"<>|]/g, '_');
+      guardia({ cmd: 'vigilar' }, () => {});   // el auxiliar sabe cuál es la carpeta Descargas
+      // Chrome cambiaría una extensión inventada por la del tipo real: el nombre se deja tal cual,
+      // lo inutilizable es el contenido (lo desordena el auxiliar mientras baja).
+      suggest({ filename: CUARENTENA + '/' + seguro, conflictAction: 'uniquify' });
+      registrar(item, 'a cuarentena' + (uiError ? ' (burbuja: ' + uiError + ')' : ''));
+
+      const gid = item.id + '-' + Date.now();
+      const timer = setTimeout(() => soltar(gid, false), RETENCION_MAX);
+      retenidas.set(gid, { gid, dlId: item.id, nombre: seguro, detalle: d.cuerpo.split('\n').slice(1).join('\n'),
+        cuerpo: d.cuerpo, tabs: new Set(), notifId: null, timer, estado: 'bajando', pendiente: null,
+        origen: originOf(item.referrer || '') || originOf((item.finalUrl || item.url || '').replace(/^blob:/, '')) });
+      porDescarga.set(item.id, gid);
+      mantenerVivo();
+      mostrarAviso(gid);
+    }
+  }
+}
 
 chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
   const downloadId = pendingDownloads.get(notificationId);
   if (downloadId === undefined) return;
   pendingDownloads.delete(notificationId);
-
-  if (buttonIndex === 0) {
-    chrome.downloads.resume(downloadId, () => void chrome.runtime.lastError);
-  } else {
-    chrome.downloads.cancel(downloadId, () => {
-      void chrome.runtime.lastError;
-      chrome.downloads.removeFile(downloadId, () => {
-        void chrome.runtime.lastError;
-        chrome.downloads.erase({ id: downloadId }, () => void chrome.runtime.lastError);
-      });
-    });
-  }
+  soltar(downloadId, buttonIndex === 0);
   chrome.notifications.clear(notificationId);
 });
 
@@ -423,7 +848,7 @@ chrome.notifications.onClosed.addListener((notificationId) => {
   const downloadId = pendingDownloads.get(notificationId);
   if (downloadId === undefined) return;
   pendingDownloads.delete(notificationId);
-  chrome.downloads.cancel(downloadId, () => void chrome.runtime.lastError);
+  soltar(downloadId, false);
 });
 
 // ── Ciclo de vida de las pestañas ────────────────────────────────────────────

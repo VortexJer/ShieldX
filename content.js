@@ -150,6 +150,8 @@ function noteGesture() {
 for (const type of ['pointerdown', 'keydown']) {
   window.addEventListener(type, (e) => {
     if (!e.isTrusted) return;
+    // Un clic en el recuadro de ShieldX decide sobre una descarga: no autoriza otras.
+    if (typeof dlHost !== 'undefined' && dlHost && e.target === dlHost) return;
     lastUserGesture = Date.now();
     // composedPath()[0] atraviesa el shadow DOM; e.target se queda en el host.
     const objetivo = (typeof e.composedPath === 'function' && e.composedPath()[0]) || e.target;
@@ -160,6 +162,11 @@ for (const type of ['pointerdown', 'keydown']) {
 
 window.addEventListener('__shieldx_guard_block', () => {
   killOverlays(true);   // el que intentó abrir la ventana suele ser un overlay
+  try {
+    const d = JSON.parse(document.documentElement.getAttribute('data-sx-bloqueo') || '{}');
+    document.documentElement.removeAttribute('data-sx-bloqueo');
+    sxGlobo(d.kind || 'popup', d.url || '');
+  } catch (_) {}
   try {
     chrome.runtime.sendMessage({ type: 'GUARD_BLOCKED' }, () => void chrome.runtime.lastError);
   } catch (_) {}
@@ -1253,11 +1260,538 @@ function startPick() {
   document.addEventListener('keydown', onKey, true);
 }
 
+
+// ── Aviso de descarga retenida, dentro de la página ──────────────────────────
+// El service worker retiene una descarga que el usuario no pidió y pide aquí la
+// decisión. Todo vive en un shadow root cerrado (la página no puede leerlo ni
+// pulsar sus botones) y solo cuentan los clics reales (isTrusted).
+// Una descarga: una tarjeta. Varias: un mazo (tarjeta delantera + capas detrás)
+// que se despliega en una lista compacta con "Cancelar todas".
+const dlCola = [];             // { id, nombre, detalle } por orden de llegada
+let dlHost = null, dlRaiz = null, dlExpandido = false;
+
+const DL_CSS = `
+  /* Liquid Glass (Apple, 2025): vidrio claro que refracta lo que hay detrás
+     (backdrop-filter con un filtro SVG de desplazamiento #sx-lg + poco
+     desenfoque), filos de luz especulares, cápsulas de vidrio como botones y un
+     tinte rojo muy suave de aviso. Con "reducir transparencia" se vuelve opaco. */
+  :host{all:initial}
+  *{box-sizing:border-box}
+  .zona{position:fixed;top:16px;right:16px;width:360px;max-width:calc(100vw - 24px);
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;color:var(--tx);
+    --tx:#1d1d1f;--tx2:rgba(29,29,31,.74);--sep:rgba(120,30,30,.16);
+    --tinte:rgba(250,250,252,.62);--tinte2:rgba(255,255,255,.22);
+    --brillo:rgba(255,255,255,.85);--brillo2:rgba(255,255,255,.28);
+    --sombra:0 24px 60px rgba(90,10,10,.24),0 6px 18px rgba(0,0,0,.10);
+    --tonal:rgba(255,255,255,.42);--tonalH:rgba(255,255,255,.62);--rojo:#d70015;--rojoT:#c41a12;
+    --capsula:rgba(255,255,255,.66);--capsulaH:rgba(255,255,255,.8)}
+  .zona.oscuro{
+    --tx:#ffffff;--tx2:rgba(255,255,255,.76);--sep:rgba(255,140,130,.18);
+    --tinte:rgba(24,24,28,.62);--tinte2:rgba(255,255,255,.07);
+    --brillo:rgba(255,255,255,.38);--brillo2:rgba(255,255,255,.10);
+    --sombra:0 26px 64px rgba(0,0,0,.55),0 6px 18px rgba(0,0,0,.35);
+    --tonal:rgba(255,255,255,.12);--tonalH:rgba(255,255,255,.2);--rojo:#ff6961;--rojoT:#ffb4ab;
+    --capsula:rgba(22,22,26,.5);--capsulaH:rgba(22,22,26,.62)}
+
+  .mazo{position:relative}
+  .capa,.tarjeta,.lista{position:relative;border-radius:28px;isolation:isolate;
+    background:linear-gradient(160deg,var(--tinte2),transparent 55%),var(--tinte);
+    -webkit-backdrop-filter:blur(26px) saturate(170%);
+    backdrop-filter:blur(26px) saturate(170%);
+    backdrop-filter:url(#sx-lg) blur(22px) saturate(170%) brightness(1.02);
+    box-shadow:var(--sombra),
+      inset 0 1px 0 var(--brillo),            /* filo de luz superior */
+      inset 0 -1px 1px var(--brillo2),         /* reflejo inferior */
+      inset 1px 0 0 var(--brillo2), inset -1px 0 0 var(--brillo2),
+      inset 0 0 0 .5px rgba(255,255,255,.22)}
+  /* brillo especular: una luz curva arriba a la izquierda, como el cristal */
+  .capa::before,.tarjeta::before,.lista::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;
+    background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.55),rgba(255,255,255,0) 55%),
+               radial-gradient(80% 60% at 110% 120%,rgba(255,255,255,.14),rgba(255,255,255,0) 60%)}
+  .oscuro .capa::before,.oscuro .tarjeta::before,.oscuro .lista::before{
+    background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.16),rgba(255,255,255,0) 55%),
+               radial-gradient(80% 60% at 110% 120%,rgba(255,255,255,.06),rgba(255,255,255,0) 60%)}
+  @media (prefers-reduced-transparency:reduce){
+    .capa,.tarjeta,.lista{backdrop-filter:none;-webkit-backdrop-filter:none;background:#fff3f2}
+    .oscuro .capa,.oscuro .tarjeta,.oscuro .lista{background:#2c1516}}
+
+  .capa{position:absolute;left:0;right:0;top:0;height:100%;pointer-events:none;transition:transform .45s cubic-bezier(.34,1.56,.64,1),opacity .3s}
+  .capa.c1{transform:translateY(10px) scale(.95);opacity:.75}
+  .capa.c2{transform:translateY(20px) scale(.9);opacity:.45}
+  .tarjeta{padding:16px 16px 14px;animation:entra .55s cubic-bezier(.34,1.56,.64,1) both}
+  .tarjeta.sale{animation:sale .22s ease-in both}
+  @keyframes entra{from{opacity:0;transform:translateY(-14px) scale(.92)}to{opacity:1;transform:none}}
+  @keyframes sale{to{opacity:0;transform:translateY(-8px) scale(.96)}}
+
+  .cab{display:flex;gap:12px;align-items:flex-start}
+  .ico{flex:none;width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
+    color:var(--rojo);background:var(--capsula);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.6),0 4px 12px rgba(0,0,0,.08)}
+  .ico svg{width:22px;height:22px}
+  .txt{min-width:0;flex:1}
+  .tit{margin:2px 0 0;font-weight:700;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--rojoT)}
+  .nom{margin-top:3px;font-weight:700;font-size:17px;line-height:1.22;letter-spacing:-.012em;overflow-wrap:anywhere;
+    text-shadow:0 1px 0 rgba(255,255,255,.35)}
+  .oscuro .nom,.oscuro .lcab b{text-shadow:0 1px 2px rgba(0,0,0,.45)}
+    .oscuro .det,.oscuro .tit{text-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .det{margin-top:2px;color:var(--tx2);font-size:12.5px;white-space:pre-line;overflow-wrap:anywhere}
+
+  .acc{display:flex;gap:8px;margin-top:14px}
+  button{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;font-weight:600;font-size:14px;letter-spacing:.005em;
+    border-radius:999px;padding:10px 16px;min-height:40px;display:inline-flex;align-items:center;justify-content:center;
+    transition:background .2s,transform .25s cubic-bezier(.34,1.56,.64,1),box-shadow .2s,filter .2s}
+  button:focus-visible{outline:2px solid var(--rojo);outline-offset:3px}
+  button:active{transform:scale(.95)}
+  .acc button{flex:1}
+  /* botón principal: lleno, como el filled button de M3 */
+  .peligro{background:var(--capsula);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--rojo);font-weight:700;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
+  .peligro:hover{background:var(--capsulaH)}
+  /* secundario: píldora de vidrio, como el tonal button */
+  .tonal{background:var(--capsula);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
+  .tonal:hover{background:var(--capsulaH)}
+
+  .pie{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--sep);color:var(--tx2);font-size:12.5px}
+  .enlace{color:var(--rojoT);font-weight:600;min-height:0;padding:4px 10px;margin:-4px -10px;border-radius:999px;font-size:13px}
+  .enlace:hover{background:rgba(255,255,255,.18)}
+
+  .lista{padding:8px 8px 10px;animation:entra .45s cubic-bezier(.34,1.56,.64,1) both}
+  .lcab{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 14px}
+  .lcab b{font-weight:700;font-size:14.5px}
+  .filas{max-height:min(46vh,320px);overflow:auto;scrollbar-width:thin}
+  .fila{display:flex;align-items:center;gap:10px;padding:10px 10px 10px 14px;border-radius:20px;transition:background .2s}
+  .fila:hover{background:rgba(255,255,255,.16)}
+  .fila+.fila{margin-top:2px}
+  .fila .txt{flex:1}.fila .nom{font-size:14.5px;font-weight:700;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fila .det{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini{flex:none;width:36px;height:36px;min-height:36px;border-radius:50%;padding:0;font-size:16px}
+  .mini.si{background:var(--capsula);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.si:hover{background:var(--tonalH)}
+  .mini.no{background:var(--capsula);color:var(--rojo);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.no:hover{background:var(--tonalH)}
+  .lpie{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px 4px}
+  .todas{display:flex;gap:14px;flex:none}
+  .enlace.suave{color:var(--tx)}.enlace.suave:hover{background:rgba(255,255,255,.2)}
+  /* ── Notificación estilo macOS + pila estilo Sonner ── */
+  .zona{font-size:13px;line-height:1.35}
+  .pila{position:relative;transition:height .4s cubic-bezier(.32,.72,0,1)}
+  .notif{position:absolute;left:0;right:0;top:0;padding:11px 14px 12px;border-radius:22px;transform-origin:top center;
+    transition:transform .45s cubic-bezier(.32,.72,0,1),opacity .3s}
+  .pila:not(.abierta) .notif:not(:first-child)>*{opacity:0}
+  .notif>*{transition:opacity .25s}
+  .ncab{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .ncab .ico{width:20px;height:20px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
+  .ncab .ico svg{width:13px;height:13px}
+  .napp{font-size:12px;font-weight:500;color:var(--tx2);letter-spacing:.01em}
+  .nhora{margin-left:auto;font-size:12px;color:var(--tx2)}
+  .ntit{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--tx)}
+  .nnom{font-size:13.5px;font-weight:400;line-height:1.3;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ndet{font-size:12px;color:var(--tx2);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .oscuro .ntit,.oscuro .nnom{text-shadow:0 1px 1px rgba(0,0,0,.3)}
+  .notif .acc{margin-top:10px;gap:8px}
+  .notif .acc button{min-height:32px;padding:6px 12px;font-size:13px;font-weight:500}
+  .notif .acc .peligro{font-weight:600}
+  .barra{display:none;align-items:center;gap:6px;margin-top:10px;padding:5px 5px 5px 14px;border-radius:999px;animation:none}
+  .barra.visible{display:flex}
+  .bnum{flex:1;font-size:12px;color:var(--tx2);white-space:nowrap}
+  .mini2{min-height:28px;padding:4px 12px;font-size:12.5px;font-weight:500}
+  /* ── Tarjeta: mezcla (nombre grande, botones grandes, pesos ligeros) + volteo ── */
+  .volteable{padding:15px 16px 13px;border-radius:26px}
+  .volteable.varias{cursor:pointer}
+  .caras{position:relative;perspective:1100px;transition:height .5s cubic-bezier(.32,.72,0,1)}
+  .cara{position:absolute;top:0;left:0;right:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+    transform-origin:center center;transition:transform .6s cubic-bezier(.32,.72,0,1),opacity .35s ease}
+  .cara.detras{transform:rotateY(180deg);opacity:0;pointer-events:none}
+  .cara.entra-der{animation:entraDer .38s cubic-bezier(.32,.72,0,1) both}
+  .cara.entra-izq{animation:entraIzq .38s cubic-bezier(.32,.72,0,1) both}
+  .cara.sale-izq{animation:saleIzq .3s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+  .cara.sale-der{animation:saleDer .3s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+  @keyframes entraDer{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+  @keyframes entraIzq{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
+  @keyframes saleIzq{to{opacity:0;transform:translateX(-40px)}}
+  @keyframes saleDer{to{opacity:0;transform:translateX(40px)}}
+  .volteada .cara.delante{transform:rotateY(-180deg);opacity:0;pointer-events:none}
+  .volteada .cara.detras{transform:rotateY(0);opacity:1;pointer-events:auto}
+  .vcab{display:flex;gap:12px;align-items:flex-start}
+  .vcab .ico{width:40px;height:40px;border-radius:12px}
+  .vfila{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .vfila .vnom{flex:1;min-width:0;margin-top:1px;font-size:15.5px;font-weight:600;line-height:1.25;letter-spacing:-.01em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vdetalles{flex:none;font-size:12.5px;font-weight:500;color:var(--tx2)}
+  .varias:hover .vdetalles{color:var(--tx)}
+  .vsub{margin-top:3px;font-size:12.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vrojo{color:var(--rojo);font-weight:600}
+  .vchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .vchip{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--capsula);color:var(--tx);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
+  .vsup{display:flex;align-items:center;gap:8px;min-height:22px}
+  .vtit{font-size:12.5px;font-weight:600;color:var(--rojoT)}
+  .vnav{margin-left:auto;display:flex;align-items:center;gap:2px}
+  .vcuenta{font-size:12px;color:var(--tx2);white-space:nowrap}
+  .flecha{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;font-size:17px;line-height:1;color:var(--tx)}
+  .flecha:hover{background:var(--capsula)}
+  .flecha:disabled{opacity:.28;cursor:default;background:none}
+  .vtipos{margin-top:1px;font-size:12px;font-weight:600;color:var(--tx);opacity:.85;letter-spacing:.01em}
+  .vnom{margin-top:2px;font-size:16px;font-weight:600;line-height:1.25;letter-spacing:-.01em;color:var(--tx);overflow-wrap:anywhere}
+  .vdet{margin-top:2px;font-size:12.5px;color:var(--tx2);overflow-wrap:anywhere}
+  .oscuro .vnom{text-shadow:0 1px 1px rgba(0,0,0,.3)}
+  .volteable .acc{margin-top:13px}
+  .volteable .acc button{font-weight:500}
+  .volteable .acc .peligro{font-weight:600}
+  .vpista{margin-top:10px;text-align:center;font-size:11.5px;color:var(--tx2)}
+  .detras .lcab{padding:0 2px 8px}
+  .detras .lcab b{font-weight:600;font-size:14px}
+  .detras .filas{margin:0 -6px}
+  .vpie{display:flex;gap:8px;margin-top:10px}
+  .vpie button{flex:1;min-height:36px;padding:7px 12px;font-size:13px;font-weight:500}
+  .vpie .peligro{font-weight:600}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+`;
+
+const DL_ICONO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/>'
+  + '<path d="M12 8.2v4.4"/><path d="M12 15.9v.1"/></svg>';
+
+function dlEl(tag, cls, texto) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+function dlBoton(txt, cls, onClick) {
+  const b = dlEl('button', cls, txt);
+  b.addEventListener('click', (e) => { if (e.isTrusted) onClick(); });   // un clic fabricado por la página no vale
+  return b;
+}
+
+function dlOrdenadas() {
+  const aqui = location.origin;
+  return dlCola.slice().sort((a, b) =>
+    ((a.origen === aqui ? 0 : 1) - (b.origen === aqui ? 0 : 1)) || (b.t - a.t));
+}
+
+function dlDecidir(id, permitir) {
+  // Si la extensión se recargó, esta copia de la página quedó desconectada
+  // ("Extension context invalidated"): sus avisos ya no sirven; se quitan y se
+  // pide recargar la página, sin lanzar errores.
+  let enviado = false;
+  try {
+    if (chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage({ type: 'DL_DECISION', id, permitir }, () => void chrome.runtime.lastError);
+      enviado = true;
+    }
+  } catch (_) {}
+  if (!enviado) {
+    dlCola.length = 0;
+    dlRender(false);
+    try { dlToast('ShieldX se ha actualizado: recarga la página para decidir sobre la descarga.'); } catch (_) {}
+    return;
+  }
+  dlCerrar(id);
+}
+
+function dlCancelarTodas() {
+  for (const it of dlCola.slice()) dlDecidir(it.id, false);
+}
+
+function dlPermitirTodas() {
+  for (const it of dlCola.slice()) dlDecidir(it.id, true);
+}
+
+function sxFiltroCristal() {
+  // Refracción tipo Liquid Glass: ruido suave que desplaza lo que hay detrás del vidrio.
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', '0'); svg.setAttribute('height', '0');
+  svg.setAttribute('style', 'position:absolute;width:0;height:0');
+  svg.setAttribute('aria-hidden', 'true');
+  const f = document.createElementNS(NS, 'filter');
+  f.setAttribute('id', 'sx-lg'); f.setAttribute('x', '0%'); f.setAttribute('y', '0%');
+  f.setAttribute('width', '100%'); f.setAttribute('height', '100%');
+  const turb = document.createElementNS(NS, 'feTurbulence');
+  turb.setAttribute('type', 'fractalNoise'); turb.setAttribute('baseFrequency', '0.008 0.012');
+  turb.setAttribute('numOctaves', '2'); turb.setAttribute('seed', '7'); turb.setAttribute('result', 'ruido');
+  const suave = document.createElementNS(NS, 'feGaussianBlur');
+  suave.setAttribute('in', 'ruido'); suave.setAttribute('stdDeviation', '2'); suave.setAttribute('result', 'mapa');
+  const desp = document.createElementNS(NS, 'feDisplacementMap');
+  desp.setAttribute('in', 'SourceGraphic'); desp.setAttribute('in2', 'mapa');
+  desp.setAttribute('scale', '26'); desp.setAttribute('xChannelSelector', 'R'); desp.setAttribute('yChannelSelector', 'G');
+  f.append(turb, suave, desp); svg.append(f);
+  return svg;
+}
+
+
+function dlAsegurarZona() {
+  if (dlHost && dlHost.isConnected) return;
+  dlHost = document.createElement('div');
+  dlHost.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
+  dlRaiz = dlHost.attachShadow({ mode: 'closed' });
+  const css = document.createElement('style');
+  css.textContent = DL_CSS;
+  dlRaiz.append(css);
+  dlRaiz.append(sxFiltroCristal());
+  (document.documentElement || document.body).appendChild(dlHost);
+}
+
+// Cara delantera, limpia:
+//  - una:    [escudo] Factura.pdf
+//                     Descarga bloqueada · dominio
+//  - varias: [escudo] 3 descargas bloqueadas        Detalles ›
+//                     dominio
+//            (.pdf) (.zip) (.docx)
+//  y debajo los dos botones (para todas si son varias).
+function dlCaraDelante(items) {
+  const n = items.length;
+  const it = items[0];
+  const cara = dlEl('div', 'cara delante');
+  const cab = dlEl('div', 'vcab');
+  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia
+  const txt = dlEl('div', 'txt');
+  const dominio = (it.origen || '').replace(/^https?:\/\//, '') ||
+    ((it.detalle.match(/Desde:\s*([^\n·]+)/) || [])[1] || '').trim();
+  const fila = dlEl('div', 'vfila');
+  if (n > 1) {
+    fila.append(dlEl('div', 'vnom', n + ' descargas bloqueadas'), dlEl('span', 'vdetalles', 'Detalles ›'));
+    txt.append(fila);
+    if (dominio) txt.append(dlEl('div', 'vsub', dominio));
+    const chips = dlEl('div', 'vchips');
+    const tipos = [...new Set(items.map(x => (String(x.nombre).match(/\.[a-z0-9]{1,5}$/i) || ['archivo'])[0].toLowerCase()))];
+    for (const tp of tipos) chips.append(dlEl('span', 'vchip', tp));
+    txt.append(chips);
+  } else {
+    const nom = dlEl('div', 'vnom', it.nombre); nom.title = it.nombre;
+    fila.append(nom);
+    txt.append(fila);
+    const sub = dlEl('div', 'vsub');
+    sub.append(dlEl('span', 'vrojo', 'Descarga bloqueada'));
+    if (dominio) sub.append(document.createTextNode(' · ' + dominio));
+    txt.append(sub);
+  }
+  cab.append(ico, txt);
+  const acc = dlEl('div', 'acc');
+  if (n > 1) {
+    acc.append(dlBoton('Borrar todas', 'peligro', dlCancelarTodas),
+               dlBoton('Permitir todas', 'tonal', dlPermitirTodas));
+  } else {
+    acc.append(dlBoton('Borrar', 'peligro', () => dlDecidir(it.id, false)),
+               dlBoton('Permitir', 'tonal', () => dlDecidir(it.id, true)));
+  }
+  cara.append(cab, acc);
+  return cara;
+}
+
+// Cara trasera: todas en lista, con ✓/✕ y "Permitir todas · Borrar todas".
+function dlCaraDetras(items) {
+  const cara = dlEl('div', 'cara detras');
+  const cab = dlEl('div', 'lcab');
+  cab.append(dlEl('b', '', items.length + ' descargas bloqueadas'), dlEl('span', 'vcuenta', 'Toca para volver'));
+  const filas = dlEl('div', 'filas');
+  for (const it of items) {
+    const f = dlEl('div', 'fila');
+    const txt = dlEl('div', 'txt');
+    const nom = dlEl('div', 'nom', it.nombre); nom.title = it.nombre;
+    txt.append(nom, dlEl('div', 'det', it.detalle.replace(/\n/g, ' · ')));
+    const si = dlBoton('✓', 'mini si', () => dlDecidir(it.id, true)); si.title = 'Permitir';
+    const no = dlBoton('✕', 'mini no', () => dlDecidir(it.id, false)); no.title = 'Cancelar y borrar';
+    f.append(txt, si, no);
+    filas.append(f);
+  }
+  cara.append(cab, filas);
+  return cara;
+}
+
+// Con varias descargas, un clic en la tarjeta (fuera de los botones) la voltea.
+// El vidrio no se mueve: dentro giran las dos caras (ya pintadas las dos) y la
+// altura pasa suavemente de la de una cara a la de la otra.
+function dlAjustarAltura(caras, animar) {
+  const visible = caras.querySelector(dlExpandido ? '.detras' : '.delante');
+  if (!visible) return;
+  if (!animar) caras.style.transition = 'none';
+  caras.style.height = visible.offsetHeight + 'px';
+  if (!animar) { void caras.offsetHeight; caras.style.transition = ''; }
+}
+
+function dlRender(animar) {
+  if (!dlCola.length) { if (dlHost) { dlHost.remove(); dlHost = null; dlRaiz = null; } dlExpandido = false; return; }
+  dlAsegurarZona();
+  for (const viejo of dlRaiz.querySelectorAll('.zona')) viejo.remove();
+  const zona = dlEl('div', 'zona' + (matchMedia('(prefers-color-scheme: dark)').matches ? ' oscuro' : ''));
+  dlRaiz.append(zona);
+  const items = dlOrdenadas();
+  const n = items.length;
+  if (n < 2) dlExpandido = false;
+  const t = dlEl('div', 'tarjeta volteable' + (n > 1 ? ' varias' : '') + (dlExpandido ? ' volteada' : ''));
+  t.setAttribute('role', 'alert');
+  if (!animar) t.style.animation = 'none';
+  const caras = dlEl('div', 'caras');
+  caras.append(dlCaraDelante(items));
+  if (n > 1) caras.append(dlCaraDetras(items));
+  t.append(caras);
+  zona.append(t);
+  dlAjustarAltura(caras, false);
+  if (n > 1) {
+    t.title = dlExpandido ? 'Toca para volver' : 'Toca para ver todas en lista';
+    t.addEventListener('click', (e) => {
+      if (!e.isTrusted) return;
+      if (e.composedPath().some(x => x && x.tagName === 'BUTTON')) return;   // los botones hacen lo suyo
+      dlExpandido = !dlExpandido;
+      t.classList.toggle('volteada', dlExpandido);
+      t.title = dlExpandido ? 'Toca para volver' : 'Toca para ver todas en lista';
+      dlAjustarAltura(caras, true);
+    });
+  }
+}
+
+// ── Globito de bloqueo (redirecciones, ventanas emergentes) ───────────────────
+// Mismo vidrio que los avisos de descarga. Arriba al centro, se agrupan (×N) y
+// se va solo.
+const SX_TEXTOS = {
+  popup: 'Ventana emergente bloqueada',
+  anchor: 'Redirección bloqueada',
+  form: 'Envío a otra pestaña bloqueado',
+};
+const GLOBO_CSS = `
+  .gzona{position:fixed;top:14px;left:50%;right:auto;width:auto;max-width:none;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;
+    font:14px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:var(--tx)}
+  .globo{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 10px;border-radius:999px;max-width:min(460px,calc(100vw - 24px));
+    animation:gentra .5s cubic-bezier(.34,1.56,.64,1) both}
+  .globo.fuera{animation:gsale .25s ease-in both}
+  @keyframes gentra{from{opacity:0;transform:translateY(-16px) scale(.9)}to{opacity:1;transform:none}}
+  @keyframes gsale{to{opacity:0;transform:translateY(-10px) scale(.95)}}
+  .globo .ico{width:32px;height:32px;border-radius:50%}
+  .globo .ico svg{width:18px;height:18px}
+  .gtxt{min-width:0;display:flex;flex-direction:column}
+  .gtit{font-weight:700;font-size:13.5px;white-space:nowrap}
+  .gsub{font-size:12px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gnum{font-weight:700;font-size:12px;color:var(--rojo);margin-left:2px}
+  .gcerrar{width:28px;height:28px;min-height:28px;padding:0;border-radius:50%;font-size:14px;flex:none}
+  .oscuro .gtit{text-shadow:0 1px 2px rgba(0,0,0,.45)}
+`;
+let sxGloboHost = null, sxGloboZona = null;
+const sxGlobos = new Map();   // kind -> { el, n, timer }
+
+function sxGlobo(kind, url) {
+  if (!IS_TOP_FRAME) return;
+  if (!sxGloboHost || !sxGloboHost.isConnected) {
+    sxGloboHost = document.createElement('div');
+    sxGloboHost.style.cssText = 'all:initial;position:fixed;top:0;left:0;z-index:2147483647;';
+    const raiz = sxGloboHost.attachShadow({ mode: 'closed' });
+    const css = document.createElement('style');
+    css.textContent = DL_CSS + GLOBO_CSS;
+    sxGloboZona = document.createElement('div');
+    sxGloboZona.className = 'zona gzona' + (matchMedia('(prefers-color-scheme: dark)').matches ? ' oscuro' : '');
+    raiz.append(css, sxFiltroCristal(), sxGloboZona);
+    (document.documentElement || document.body).appendChild(sxGloboHost);
+  }
+  let destino = '';
+  try { destino = new URL(url, location.href).hostname; } catch (_) {}
+  const ya = sxGlobos.get(kind);
+  if (ya) {
+    ya.n++;
+    ya.num.textContent = '×' + ya.n;
+    if (destino) ya.sub.textContent = 'Hacia ' + destino;
+    clearTimeout(ya.timer);
+    ya.timer = setTimeout(() => sxQuitarGlobo(kind), 5000);
+    return;
+  }
+  const el = dlEl('div', 'globo tarjeta');
+  el.setAttribute('role', 'status');
+  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia
+  const txt = dlEl('div', 'gtxt');
+  const tit = dlEl('div', 'gtit', SX_TEXTOS[kind] || 'Bloqueo de ShieldX');
+  const num = dlEl('span', 'gnum', '');
+  tit.append(num);
+  const sub = dlEl('div', 'gsub', destino ? 'Hacia ' + destino : 'ShieldX lo ha parado por ti');
+  txt.append(tit, sub);
+  const cerrar = dlBoton('✕', 'mini si gcerrar', () => sxQuitarGlobo(kind));
+  cerrar.title = 'Cerrar';
+  el.append(ico, txt, cerrar);
+  sxGloboZona.append(el);
+  const item = { el, n: 1, num, sub, timer: setTimeout(() => sxQuitarGlobo(kind), 5000) };
+  sxGlobos.set(kind, item);
+}
+
+function sxQuitarGlobo(kind) {
+  const it = sxGlobos.get(kind);
+  if (!it) return;
+  sxGlobos.delete(kind);
+  clearTimeout(it.timer);
+  it.el.classList.add('fuera');
+  setTimeout(() => it.el.remove(), 260);
+}
+
+function dlMostrar(id, nombre, detalle, origen) {
+  if (!IS_TOP_FRAME) return;
+  if (dlCola.some(x => x.id === id)) return;
+  dlCola.push({ id, nombre, detalle, origen: String(origen || ''), t: Date.now() });
+  dlRender(dlCola.length === 1 || !dlExpandido);   // la animación de entrada solo para la primera
+}
+
+function dlCerrar(id) {
+  const i = dlCola.findIndex(x => x.id === id);
+  if (i < 0) return;
+  dlCola.splice(i, 1);
+  if (dlCola.length < 2) dlExpandido = false;
+  dlRender(false);
+}
+
+
+// Aviso corto y discreto (un mensaje de resultado), con el mismo cristal que el recuadro.
+function dlToast(texto) {
+  const host = document.createElement('div');
+  host.style.cssText = 'all:initial;position:fixed;right:18px;bottom:18px;z-index:2147483647;';
+  const raiz = host.attachShadow({ mode: 'closed' });
+  const css = document.createElement('style');
+  css.textContent = `
+    .t{max-width:340px;padding:11px 16px;border-radius:14px;font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+      color:#2a1415;background:rgba(255,246,245,.82);border:1px solid rgba(255,69,58,.28);
+      -webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);
+      box-shadow:0 14px 40px rgba(120,20,20,.25);animation:e .35s cubic-bezier(.2,.9,.25,1.05) both}
+    @media (prefers-color-scheme:dark){.t{color:#fdeeee;background:rgba(46,22,24,.78);border-color:rgba(255,99,88,.34)}}
+    @keyframes e{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+    @media (prefers-reduced-motion:reduce){.t{animation:none}}`;
+  const t = document.createElement('div'); t.className = 't'; t.textContent = texto;
+  raiz.append(css, t);
+  (document.documentElement || document.body).appendChild(host);
+  setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => host.remove(), 320); }, 6000);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (typeof msg !== 'object' || msg === null) return;
   if (msg.type === 'PICK_START') startPick();
+  if (msg.type === 'DL_PROMPT' && IS_TOP_FRAME) {
+    dlMostrar(msg.id, String(msg.nombre || ''), String(msg.detalle || ''), msg.origen);
+    sendResponse({ ok: true });
+  }
+  if (msg.type === 'DL_CLOSE') dlCerrar(msg.id);
+  if (msg.type === 'DL_TOAST' && IS_TOP_FRAME) {
+    dlToast(String(msg.texto || ''));
+    sendResponse({ ok: true });
+  }
+  if (msg.type === 'DL_REPLAY' && IS_TOP_FRAME) {
+    // El usuario pulsó Permitir: se repite la descarga del blob desde la propia página.
+    // fetch comprueba antes que el blob sigue vivo (si la página lo revocó, falla).
+    fetch(msg.url).then((r) => r.blob()).then(() => {
+      const a = document.createElement('a');
+      a.href = msg.url; a.download = String(msg.nombre || 'descarga'); a.style.display = 'none';
+      (document.documentElement || document.body).appendChild(a);
+      a.click(); a.remove();
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;   // respuesta asíncrona
+  }
   if (msg.type === 'COOKIE_SHOW' && IS_TOP_FRAME) {
     sendResponse({ restaurados: restoreCookieUI() });
   }
 });
+
+// Al cargar la página: si hay descargas bloqueadas pendientes (también las que
+// sobrevivieron a cerrar Chrome o reiniciar la extensión), se muestran aquí.
+if (IS_TOP_FRAME && /^(https?|file):/i.test(location.protocol)) {
+  try {
+    chrome.runtime.sendMessage({ type: 'DL_LIST' }, (res) => {
+      void chrome.runtime.lastError;
+      for (const p of (res && res.lista) || []) dlMostrar(p.id, String(p.nombre || ''), String(p.detalle || ''), p.origen);
+    });
+  } catch (_) {}
+}
