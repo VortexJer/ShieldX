@@ -163,6 +163,11 @@ for (const type of ['pointerdown', 'keydown']) {
 window.addEventListener('__shieldx_guard_block', () => {
   killOverlays(true);   // el que intentó abrir la ventana suele ser un overlay
   try {
+    const d = JSON.parse(document.documentElement.getAttribute('data-sx-bloqueo') || '{}');
+    document.documentElement.removeAttribute('data-sx-bloqueo');
+    sxGlobo(d.kind || 'popup', d.url || '');
+  } catch (_) {}
+  try {
     chrome.runtime.sendMessage({ type: 'GUARD_BLOCKED' }, () => void chrome.runtime.lastError);
   } catch (_) {}
 });
@@ -1275,24 +1280,26 @@ const DL_CSS = `
   .zona{position:fixed;top:16px;right:16px;width:360px;max-width:calc(100vw - 24px);
     font:14px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;color:var(--tx);
-    --tx:#2b1213;--tx2:rgba(58,22,24,.72);--sep:rgba(120,30,30,.16);
-    --tinte:rgba(255,246,245,.30);--tinte2:rgba(255,200,195,.16);
+    --tx:#1d1d1f;--tx2:rgba(29,29,31,.74);--sep:rgba(120,30,30,.16);
+    --tinte:rgba(250,250,252,.62);--tinte2:rgba(255,255,255,.22);
     --brillo:rgba(255,255,255,.85);--brillo2:rgba(255,255,255,.28);
     --sombra:0 24px 60px rgba(90,10,10,.24),0 6px 18px rgba(0,0,0,.10);
-    --tonal:rgba(255,255,255,.42);--tonalH:rgba(255,255,255,.62);--rojo:#e3241b;--rojoT:#c41a12}
-  @media (prefers-color-scheme:dark){.zona{
-    --tx:#fff1f0;--tx2:rgba(255,226,224,.74);--sep:rgba(255,140,130,.18);
-    --tinte:rgba(40,14,16,.38);--tinte2:rgba(255,80,70,.10);
+    --tonal:rgba(255,255,255,.42);--tonalH:rgba(255,255,255,.62);--rojo:#d70015;--rojoT:#c41a12;
+    --capsula:rgba(255,255,255,.66);--capsulaH:rgba(255,255,255,.8)}
+  .zona.oscuro{
+    --tx:#ffffff;--tx2:rgba(255,255,255,.76);--sep:rgba(255,140,130,.18);
+    --tinte:rgba(24,24,28,.62);--tinte2:rgba(255,255,255,.07);
     --brillo:rgba(255,255,255,.38);--brillo2:rgba(255,255,255,.10);
     --sombra:0 26px 64px rgba(0,0,0,.55),0 6px 18px rgba(0,0,0,.35);
-    --tonal:rgba(255,255,255,.12);--tonalH:rgba(255,255,255,.2);--rojo:#ff5449;--rojoT:#ffb4ab}}
+    --tonal:rgba(255,255,255,.12);--tonalH:rgba(255,255,255,.2);--rojo:#ff6961;--rojoT:#ffb4ab;
+    --capsula:rgba(22,22,26,.5);--capsulaH:rgba(22,22,26,.62)}
 
   .mazo{position:relative}
   .capa,.tarjeta,.lista{position:relative;border-radius:28px;isolation:isolate;
     background:linear-gradient(160deg,var(--tinte2),transparent 55%),var(--tinte);
-    -webkit-backdrop-filter:blur(14px) saturate(190%);
-    backdrop-filter:blur(14px) saturate(190%);
-    backdrop-filter:url(#sx-lg) blur(5px) saturate(185%) brightness(1.06);
+    -webkit-backdrop-filter:blur(26px) saturate(170%);
+    backdrop-filter:blur(26px) saturate(170%);
+    backdrop-filter:url(#sx-lg) blur(22px) saturate(170%) brightness(1.02);
     box-shadow:var(--sombra),
       inset 0 1px 0 var(--brillo),            /* filo de luz superior */
       inset 0 -1px 1px var(--brillo2),         /* reflejo inferior */
@@ -1301,13 +1308,13 @@ const DL_CSS = `
   /* brillo especular: una luz curva arriba a la izquierda, como el cristal */
   .capa::before,.tarjeta::before,.lista::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;
     background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.55),rgba(255,255,255,0) 55%),
-               radial-gradient(80% 60% at 110% 120%,rgba(255,120,110,.18),rgba(255,120,110,0) 60%)}
-  @media (prefers-color-scheme:dark){.capa::before,.tarjeta::before,.lista::before{
+               radial-gradient(80% 60% at 110% 120%,rgba(255,255,255,.14),rgba(255,255,255,0) 60%)}
+  .oscuro .capa::before,.oscuro .tarjeta::before,.oscuro .lista::before{
     background:radial-gradient(120% 70% at 12% -10%,rgba(255,255,255,.16),rgba(255,255,255,0) 55%),
-               radial-gradient(80% 60% at 110% 120%,rgba(255,84,73,.16),rgba(255,84,73,0) 60%)}}
+               radial-gradient(80% 60% at 110% 120%,rgba(255,255,255,.06),rgba(255,255,255,0) 60%)}
   @media (prefers-reduced-transparency:reduce){
     .capa,.tarjeta,.lista{backdrop-filter:none;-webkit-backdrop-filter:none;background:#fff3f2}
-    @media (prefers-color-scheme:dark){.capa,.tarjeta,.lista{background:#2c1516}}}
+    .oscuro .capa,.oscuro .tarjeta,.oscuro .lista{background:#2c1516}}
 
   .capa{position:absolute;left:0;right:0;top:0;height:100%;pointer-events:none;transition:transform .45s cubic-bezier(.34,1.56,.64,1),opacity .3s}
   .capa.c1{transform:translateY(10px) scale(.95);opacity:.75}
@@ -1319,14 +1326,15 @@ const DL_CSS = `
 
   .cab{display:flex;gap:12px;align-items:flex-start}
   .ico{flex:none;width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
-    background:linear-gradient(160deg,#ff6b5e,#d81b12);
-    box-shadow:0 6px 16px rgba(216,27,18,.38),inset 0 1px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(0,0,0,.12)}
+    color:var(--rojo);background:var(--capsula);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.6),0 4px 12px rgba(0,0,0,.08)}
   .ico svg{width:22px;height:22px}
   .txt{min-width:0;flex:1}
   .tit{margin:2px 0 0;font-weight:700;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--rojoT)}
   .nom{margin-top:3px;font-weight:700;font-size:17px;line-height:1.22;letter-spacing:-.012em;overflow-wrap:anywhere;
-    text-shadow:0 1px 0 rgba(255,255,255,.25)}
-  @media (prefers-color-scheme:dark){.nom{text-shadow:none}}
+    text-shadow:0 1px 0 rgba(255,255,255,.35)}
+  .oscuro .nom,.oscuro .lcab b{text-shadow:0 1px 2px rgba(0,0,0,.45)}
+    .oscuro .det,.oscuro .tit{text-shadow:0 1px 2px rgba(0,0,0,.35)}
   .det{margin-top:2px;color:var(--tx2);font-size:12.5px;white-space:pre-line;overflow-wrap:anywhere}
 
   .acc{display:flex;gap:8px;margin-top:14px}
@@ -1337,15 +1345,15 @@ const DL_CSS = `
   button:active{transform:scale(.95)}
   .acc button{flex:1}
   /* botón principal: lleno, como el filled button de M3 */
-  .peligro{background:linear-gradient(180deg,rgba(255,80,68,.92),rgba(214,30,20,.92));color:#fff;box-shadow:0 4px 14px rgba(227,36,27,.32),inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(0,0,0,.12)}
-  .peligro:hover{filter:brightness(1.07);box-shadow:0 6px 16px rgba(227,36,27,.42),inset 0 1px 0 rgba(255,255,255,.3)}
+  .peligro{background:var(--capsula);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--rojo);font-weight:700;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
+  .peligro:hover{background:var(--capsulaH)}
   /* secundario: píldora de vidrio, como el tonal button */
-  .tonal{background:var(--tonal);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
-  .tonal:hover{background:var(--tonalH)}
+  .tonal{background:var(--capsula);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 1px 0 rgba(255,255,255,.55)}
+  .tonal:hover{background:var(--capsulaH)}
 
   .pie{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--sep);color:var(--tx2);font-size:12.5px}
   .enlace{color:var(--rojoT);font-weight:600;min-height:0;padding:4px 10px;margin:-4px -10px;border-radius:999px;font-size:13px}
-  .enlace:hover{background:rgba(227,36,27,.10)}
+  .enlace:hover{background:rgba(255,255,255,.18)}
 
   .lista{padding:8px 8px 10px;animation:entra .45s cubic-bezier(.34,1.56,.64,1) both}
   .lcab{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 14px}
@@ -1357,16 +1365,89 @@ const DL_CSS = `
   .fila .txt{flex:1}.fila .nom{font-size:14.5px;font-weight:700;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .fila .det{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mini{flex:none;width:36px;height:36px;min-height:36px;border-radius:50%;padding:0;font-size:16px}
-  .mini.si{background:var(--tonal);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.si:hover{background:var(--tonalH)}
-  .mini.no{background:var(--rojo);color:#fff;box-shadow:0 3px 10px rgba(227,36,27,.32)}.mini.no:hover{filter:brightness(1.07)}
+  .mini.si{background:var(--capsula);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.si:hover{background:var(--tonalH)}
+  .mini.no{background:var(--capsula);color:var(--rojo);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}.mini.no:hover{background:var(--tonalH)}
   .lpie{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px 4px}
   .todas{display:flex;gap:14px;flex:none}
   .enlace.suave{color:var(--tx)}.enlace.suave:hover{background:rgba(255,255,255,.2)}
+  /* ── Notificación estilo macOS + pila estilo Sonner ── */
+  .zona{font-size:13px;line-height:1.35}
+  .pila{position:relative;transition:height .4s cubic-bezier(.32,.72,0,1)}
+  .notif{position:absolute;left:0;right:0;top:0;padding:11px 14px 12px;border-radius:22px;transform-origin:top center;
+    transition:transform .45s cubic-bezier(.32,.72,0,1),opacity .3s}
+  .pila:not(.abierta) .notif:not(:first-child)>*{opacity:0}
+  .notif>*{transition:opacity .25s}
+  .ncab{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .ncab .ico{width:20px;height:20px;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
+  .ncab .ico svg{width:13px;height:13px}
+  .napp{font-size:12px;font-weight:500;color:var(--tx2);letter-spacing:.01em}
+  .nhora{margin-left:auto;font-size:12px;color:var(--tx2)}
+  .ntit{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--tx)}
+  .nnom{font-size:13.5px;font-weight:400;line-height:1.3;color:var(--tx);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ndet{font-size:12px;color:var(--tx2);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .oscuro .ntit,.oscuro .nnom{text-shadow:0 1px 1px rgba(0,0,0,.3)}
+  .notif .acc{margin-top:10px;gap:8px}
+  .notif .acc button{min-height:32px;padding:6px 12px;font-size:13px;font-weight:500}
+  .notif .acc .peligro{font-weight:600}
+  .barra{display:none;align-items:center;gap:6px;margin-top:10px;padding:5px 5px 5px 14px;border-radius:999px;animation:none}
+  .barra.visible{display:flex}
+  .bnum{flex:1;font-size:12px;color:var(--tx2);white-space:nowrap}
+  .mini2{min-height:28px;padding:4px 12px;font-size:12.5px;font-weight:500}
+  /* ── Tarjeta: mezcla (nombre grande, botones grandes, pesos ligeros) + volteo ── */
+  .volteable{padding:15px 16px 13px;border-radius:26px}
+  .volteable.varias{cursor:pointer}
+  .caras{position:relative;perspective:1100px;transition:height .5s cubic-bezier(.32,.72,0,1)}
+  .cara{position:absolute;top:0;left:0;right:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+    transform-origin:center center;transition:transform .6s cubic-bezier(.32,.72,0,1),opacity .35s ease}
+  .cara.detras{transform:rotateY(180deg);opacity:0;pointer-events:none}
+  .cara.entra-der{animation:entraDer .38s cubic-bezier(.32,.72,0,1) both}
+  .cara.entra-izq{animation:entraIzq .38s cubic-bezier(.32,.72,0,1) both}
+  .cara.sale-izq{animation:saleIzq .3s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+  .cara.sale-der{animation:saleDer .3s cubic-bezier(.4,0,1,1) both;pointer-events:none}
+  @keyframes entraDer{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+  @keyframes entraIzq{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
+  @keyframes saleIzq{to{opacity:0;transform:translateX(-40px)}}
+  @keyframes saleDer{to{opacity:0;transform:translateX(40px)}}
+  .volteada .cara.delante{transform:rotateY(-180deg);opacity:0;pointer-events:none}
+  .volteada .cara.detras{transform:rotateY(0);opacity:1;pointer-events:auto}
+  .vcab{display:flex;gap:12px;align-items:flex-start}
+  .vcab .ico{width:40px;height:40px;border-radius:12px}
+  .vfila{display:flex;align-items:baseline;gap:10px;min-width:0}
+  .vfila .vnom{flex:1;min-width:0;margin-top:1px;font-size:15.5px;font-weight:600;line-height:1.25;letter-spacing:-.01em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vdetalles{flex:none;font-size:12.5px;font-weight:500;color:var(--tx2)}
+  .varias:hover .vdetalles{color:var(--tx)}
+  .vsub{margin-top:3px;font-size:12.5px;color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vrojo{color:var(--rojo);font-weight:600}
+  .vchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .vchip{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--capsula);color:var(--tx);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}
+  .vsup{display:flex;align-items:center;gap:8px;min-height:22px}
+  .vtit{font-size:12.5px;font-weight:600;color:var(--rojoT)}
+  .vnav{margin-left:auto;display:flex;align-items:center;gap:2px}
+  .vcuenta{font-size:12px;color:var(--tx2);white-space:nowrap}
+  .flecha{width:24px;height:24px;min-height:24px;padding:0;border-radius:50%;font-size:17px;line-height:1;color:var(--tx)}
+  .flecha:hover{background:var(--capsula)}
+  .flecha:disabled{opacity:.28;cursor:default;background:none}
+  .vtipos{margin-top:1px;font-size:12px;font-weight:600;color:var(--tx);opacity:.85;letter-spacing:.01em}
+  .vnom{margin-top:2px;font-size:16px;font-weight:600;line-height:1.25;letter-spacing:-.01em;color:var(--tx);overflow-wrap:anywhere}
+  .vdet{margin-top:2px;font-size:12.5px;color:var(--tx2);overflow-wrap:anywhere}
+  .oscuro .vnom{text-shadow:0 1px 1px rgba(0,0,0,.3)}
+  .volteable .acc{margin-top:13px}
+  .volteable .acc button{font-weight:500}
+  .volteable .acc .peligro{font-weight:600}
+  .vpista{margin-top:10px;text-align:center;font-size:11.5px;color:var(--tx2)}
+  .detras .lcab{padding:0 2px 8px}
+  .detras .lcab b{font-weight:600;font-size:14px}
+  .detras .filas{margin:0 -6px}
+  .vpie{display:flex;gap:8px;margin-top:10px}
+  .vpie button{flex:1;min-height:36px;padding:7px 12px;font-size:13px;font-weight:500}
+  .vpie .peligro{font-weight:600}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
-const DL_ICONO = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
-  + '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z" fill="rgba(255,255,255,.16)"/>'
+const DL_ICONO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z"/>'
   + '<path d="M12 8.2v4.4"/><path d="M12 15.9v.1"/></svg>';
 
 function dlEl(tag, cls, texto) {
@@ -1389,7 +1470,22 @@ function dlOrdenadas() {
 }
 
 function dlDecidir(id, permitir) {
-  chrome.runtime.sendMessage({ type: 'DL_DECISION', id, permitir }, () => void chrome.runtime.lastError);
+  // Si la extensión se recargó, esta copia de la página quedó desconectada
+  // ("Extension context invalidated"): sus avisos ya no sirven; se quitan y se
+  // pide recargar la página, sin lanzar errores.
+  let enviado = false;
+  try {
+    if (chrome.runtime && chrome.runtime.id) {
+      chrome.runtime.sendMessage({ type: 'DL_DECISION', id, permitir }, () => void chrome.runtime.lastError);
+      enviado = true;
+    }
+  } catch (_) {}
+  if (!enviado) {
+    dlCola.length = 0;
+    dlRender(false);
+    try { dlToast('ShieldX se ha actualizado: recarga la página para decidir sobre la descarga.'); } catch (_) {}
+    return;
+  }
   dlCerrar(id);
 }
 
@@ -1401,14 +1497,7 @@ function dlPermitirTodas() {
   for (const it of dlCola.slice()) dlDecidir(it.id, true);
 }
 
-function dlAsegurarZona() {
-  if (dlHost && dlHost.isConnected) return;
-  dlHost = document.createElement('div');
-  dlHost.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
-  dlRaiz = dlHost.attachShadow({ mode: 'closed' });
-  const css = document.createElement('style');
-  css.textContent = DL_CSS;
-  dlRaiz.append(css);
+function sxFiltroCristal() {
   // Refracción tipo Liquid Glass: ruido suave que desplaza lo que hay detrás del vidrio.
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
@@ -1425,74 +1514,209 @@ function dlAsegurarZona() {
   suave.setAttribute('in', 'ruido'); suave.setAttribute('stdDeviation', '2'); suave.setAttribute('result', 'mapa');
   const desp = document.createElementNS(NS, 'feDisplacementMap');
   desp.setAttribute('in', 'SourceGraphic'); desp.setAttribute('in2', 'mapa');
-  desp.setAttribute('scale', '38'); desp.setAttribute('xChannelSelector', 'R'); desp.setAttribute('yChannelSelector', 'G');
-  f.append(turb, suave, desp); svg.append(f); dlRaiz.append(svg);
+  desp.setAttribute('scale', '26'); desp.setAttribute('xChannelSelector', 'R'); desp.setAttribute('yChannelSelector', 'G');
+  f.append(turb, suave, desp); svg.append(f);
+  return svg;
+}
+
+
+function dlAsegurarZona() {
+  if (dlHost && dlHost.isConnected) return;
+  dlHost = document.createElement('div');
+  dlHost.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
+  dlRaiz = dlHost.attachShadow({ mode: 'closed' });
+  const css = document.createElement('style');
+  css.textContent = DL_CSS;
+  dlRaiz.append(css);
+  dlRaiz.append(sxFiltroCristal());
   (document.documentElement || document.body).appendChild(dlHost);
 }
 
-function dlTarjetaCabecera(it, titulo) {
-  const cab = dlEl('div', 'cab');
-  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia, sin datos de la página
+// Cara delantera, limpia:
+//  - una:    [escudo] Factura.pdf
+//                     Descarga bloqueada · dominio
+//  - varias: [escudo] 3 descargas bloqueadas        Detalles ›
+//                     dominio
+//            (.pdf) (.zip) (.docx)
+//  y debajo los dos botones (para todas si son varias).
+function dlCaraDelante(items) {
+  const n = items.length;
+  const it = items[0];
+  const cara = dlEl('div', 'cara delante');
+  const cab = dlEl('div', 'vcab');
+  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia
   const txt = dlEl('div', 'txt');
-  txt.append(dlEl('div', 'tit', titulo), dlEl('div', 'nom', it.nombre), dlEl('div', 'det', it.detalle));
+  const dominio = (it.origen || '').replace(/^https?:\/\//, '') ||
+    ((it.detalle.match(/Desde:\s*([^\n·]+)/) || [])[1] || '').trim();
+  const fila = dlEl('div', 'vfila');
+  if (n > 1) {
+    fila.append(dlEl('div', 'vnom', n + ' descargas bloqueadas'), dlEl('span', 'vdetalles', 'Detalles ›'));
+    txt.append(fila);
+    if (dominio) txt.append(dlEl('div', 'vsub', dominio));
+    const chips = dlEl('div', 'vchips');
+    const tipos = [...new Set(items.map(x => (String(x.nombre).match(/\.[a-z0-9]{1,5}$/i) || ['archivo'])[0].toLowerCase()))];
+    for (const tp of tipos) chips.append(dlEl('span', 'vchip', tp));
+    txt.append(chips);
+  } else {
+    const nom = dlEl('div', 'vnom', it.nombre); nom.title = it.nombre;
+    fila.append(nom);
+    txt.append(fila);
+    const sub = dlEl('div', 'vsub');
+    sub.append(dlEl('span', 'vrojo', 'Descarga bloqueada'));
+    if (dominio) sub.append(document.createTextNode(' · ' + dominio));
+    txt.append(sub);
+  }
   cab.append(ico, txt);
-  return cab;
+  const acc = dlEl('div', 'acc');
+  if (n > 1) {
+    acc.append(dlBoton('Borrar todas', 'peligro', dlCancelarTodas),
+               dlBoton('Permitir todas', 'tonal', dlPermitirTodas));
+  } else {
+    acc.append(dlBoton('Borrar', 'peligro', () => dlDecidir(it.id, false)),
+               dlBoton('Permitir', 'tonal', () => dlDecidir(it.id, true)));
+  }
+  cara.append(cab, acc);
+  return cara;
+}
+
+// Cara trasera: todas en lista, con ✓/✕ y "Permitir todas · Borrar todas".
+function dlCaraDetras(items) {
+  const cara = dlEl('div', 'cara detras');
+  const cab = dlEl('div', 'lcab');
+  cab.append(dlEl('b', '', items.length + ' descargas bloqueadas'), dlEl('span', 'vcuenta', 'Toca para volver'));
+  const filas = dlEl('div', 'filas');
+  for (const it of items) {
+    const f = dlEl('div', 'fila');
+    const txt = dlEl('div', 'txt');
+    const nom = dlEl('div', 'nom', it.nombre); nom.title = it.nombre;
+    txt.append(nom, dlEl('div', 'det', it.detalle.replace(/\n/g, ' · ')));
+    const si = dlBoton('✓', 'mini si', () => dlDecidir(it.id, true)); si.title = 'Permitir';
+    const no = dlBoton('✕', 'mini no', () => dlDecidir(it.id, false)); no.title = 'Cancelar y borrar';
+    f.append(txt, si, no);
+    filas.append(f);
+  }
+  cara.append(cab, filas);
+  return cara;
+}
+
+// Con varias descargas, un clic en la tarjeta (fuera de los botones) la voltea.
+// El vidrio no se mueve: dentro giran las dos caras (ya pintadas las dos) y la
+// altura pasa suavemente de la de una cara a la de la otra.
+function dlAjustarAltura(caras, animar) {
+  const visible = caras.querySelector(dlExpandido ? '.detras' : '.delante');
+  if (!visible) return;
+  if (!animar) caras.style.transition = 'none';
+  caras.style.height = visible.offsetHeight + 'px';
+  if (!animar) { void caras.offsetHeight; caras.style.transition = ''; }
 }
 
 function dlRender(animar) {
   if (!dlCola.length) { if (dlHost) { dlHost.remove(); dlHost = null; dlRaiz = null; } dlExpandido = false; return; }
   dlAsegurarZona();
   for (const viejo of dlRaiz.querySelectorAll('.zona')) viejo.remove();
-  const zona = dlEl('div', 'zona');
+  const zona = dlEl('div', 'zona' + (matchMedia('(prefers-color-scheme: dark)').matches ? ' oscuro' : ''));
   dlRaiz.append(zona);
-  const n = dlCola.length;
+  const items = dlOrdenadas();
+  const n = items.length;
+  if (n < 2) dlExpandido = false;
+  const t = dlEl('div', 'tarjeta volteable' + (n > 1 ? ' varias' : '') + (dlExpandido ? ' volteada' : ''));
+  t.setAttribute('role', 'alert');
+  if (!animar) t.style.animation = 'none';
+  const caras = dlEl('div', 'caras');
+  caras.append(dlCaraDelante(items));
+  if (n > 1) caras.append(dlCaraDetras(items));
+  t.append(caras);
+  zona.append(t);
+  dlAjustarAltura(caras, false);
+  if (n > 1) {
+    t.title = dlExpandido ? 'Toca para volver' : 'Toca para ver todas en lista';
+    t.addEventListener('click', (e) => {
+      if (!e.isTrusted) return;
+      if (e.composedPath().some(x => x && x.tagName === 'BUTTON')) return;   // los botones hacen lo suyo
+      dlExpandido = !dlExpandido;
+      t.classList.toggle('volteada', dlExpandido);
+      t.title = dlExpandido ? 'Toca para volver' : 'Toca para ver todas en lista';
+      dlAjustarAltura(caras, true);
+    });
+  }
+}
 
-  if (n > 1 && dlExpandido) {
-    const lista = dlEl('div', 'lista');
-    if (!animar) lista.style.animation = 'none';
-    const lcab = dlEl('div', 'lcab');
-    lcab.append(dlEl('b', '', n + ' descargas bloqueadas'),
-      dlBoton('Contraer', 'enlace', () => { dlExpandido = false; dlRender(false); }));
-    const filas = dlEl('div', 'filas');
-    for (const it of dlOrdenadas()) {
-      const f = dlEl('div', 'fila');
-      const txt = dlEl('div', 'txt');
-      const nomFila = dlEl('div', 'nom', it.nombre); nomFila.title = it.nombre;   // nombre completo al pasar el ratón
-      txt.append(nomFila, dlEl('div', 'det', it.detalle.replace(/\n/g, ' · ')));
-      const si = dlBoton('✓', 'mini si', () => dlDecidir(it.id, true)); si.title = 'Permitir';
-      const no = dlBoton('✕', 'mini no', () => dlDecidir(it.id, false)); no.title = 'Cancelar y borrar';
-      f.append(txt, si, no);
-      filas.append(f);
-    }
-    const lpie = dlEl('div', 'lpie');
-    const acciones = dlEl('span', 'todas');
-    acciones.append(dlBoton('Permitir todas', 'enlace suave', dlPermitirTodas), dlBoton('Cancelar todas', 'enlace', dlCancelarTodas));
-    lpie.append(dlEl('span', 'det', 'Ninguna se guarda hasta que decidas'), acciones);
-    lista.append(lcab, filas, lpie);
-    zona.append(lista);
+// ── Globito de bloqueo (redirecciones, ventanas emergentes) ───────────────────
+// Mismo vidrio que los avisos de descarga. Arriba al centro, se agrupan (×N) y
+// se va solo.
+const SX_TEXTOS = {
+  popup: 'Ventana emergente bloqueada',
+  anchor: 'Redirección bloqueada',
+  form: 'Envío a otra pestaña bloqueado',
+};
+const GLOBO_CSS = `
+  .gzona{position:fixed;top:14px;left:50%;right:auto;width:auto;max-width:none;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;
+    font:14px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:var(--tx)}
+  .globo{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 10px;border-radius:999px;max-width:min(460px,calc(100vw - 24px));
+    animation:gentra .5s cubic-bezier(.34,1.56,.64,1) both}
+  .globo.fuera{animation:gsale .25s ease-in both}
+  @keyframes gentra{from{opacity:0;transform:translateY(-16px) scale(.9)}to{opacity:1;transform:none}}
+  @keyframes gsale{to{opacity:0;transform:translateY(-10px) scale(.95)}}
+  .globo .ico{width:32px;height:32px;border-radius:50%}
+  .globo .ico svg{width:18px;height:18px}
+  .gtxt{min-width:0;display:flex;flex-direction:column}
+  .gtit{font-weight:700;font-size:13.5px;white-space:nowrap}
+  .gsub{font-size:12px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .gnum{font-weight:700;font-size:12px;color:var(--rojo);margin-left:2px}
+  .gcerrar{width:28px;height:28px;min-height:28px;padding:0;border-radius:50%;font-size:14px;flex:none}
+  .oscuro .gtit{text-shadow:0 1px 2px rgba(0,0,0,.45)}
+`;
+let sxGloboHost = null, sxGloboZona = null;
+const sxGlobos = new Map();   // kind -> { el, n, timer }
+
+function sxGlobo(kind, url) {
+  if (!IS_TOP_FRAME) return;
+  if (!sxGloboHost || !sxGloboHost.isConnected) {
+    sxGloboHost = document.createElement('div');
+    sxGloboHost.style.cssText = 'all:initial;position:fixed;top:0;left:0;z-index:2147483647;';
+    const raiz = sxGloboHost.attachShadow({ mode: 'closed' });
+    const css = document.createElement('style');
+    css.textContent = DL_CSS + GLOBO_CSS;
+    sxGloboZona = document.createElement('div');
+    sxGloboZona.className = 'zona gzona' + (matchMedia('(prefers-color-scheme: dark)').matches ? ' oscuro' : '');
+    raiz.append(css, sxFiltroCristal(), sxGloboZona);
+    (document.documentElement || document.body).appendChild(sxGloboHost);
+  }
+  let destino = '';
+  try { destino = new URL(url, location.href).hostname; } catch (_) {}
+  const ya = sxGlobos.get(kind);
+  if (ya) {
+    ya.n++;
+    ya.num.textContent = '×' + ya.n;
+    if (destino) ya.sub.textContent = 'Hacia ' + destino;
+    clearTimeout(ya.timer);
+    ya.timer = setTimeout(() => sxQuitarGlobo(kind), 5000);
     return;
   }
+  const el = dlEl('div', 'globo tarjeta');
+  el.setAttribute('role', 'status');
+  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia
+  const txt = dlEl('div', 'gtxt');
+  const tit = dlEl('div', 'gtit', SX_TEXTOS[kind] || 'Bloqueo de ShieldX');
+  const num = dlEl('span', 'gnum', '');
+  tit.append(num);
+  const sub = dlEl('div', 'gsub', destino ? 'Hacia ' + destino : 'ShieldX lo ha parado por ti');
+  txt.append(tit, sub);
+  const cerrar = dlBoton('✕', 'mini si gcerrar', () => sxQuitarGlobo(kind));
+  cerrar.title = 'Cerrar';
+  el.append(ico, txt, cerrar);
+  sxGloboZona.append(el);
+  const item = { el, n: 1, num, sub, timer: setTimeout(() => sxQuitarGlobo(kind), 5000) };
+  sxGlobos.set(kind, item);
+}
 
-  const it = dlOrdenadas()[0];
-  const mazo = dlEl('div', 'mazo');
-  if (n > 2) mazo.append(dlEl('div', 'capa c2'));
-  if (n > 1) mazo.append(dlEl('div', 'capa c1'));
-  const t = dlEl('div', 'tarjeta');
-  if (!animar) t.style.animation = 'none';
-  t.setAttribute('role', 'alert');
-  t.append(dlTarjetaCabecera(it, n > 1 ? 'Descarga bloqueada · 1 de ' + n : 'Descarga bloqueada'));
-  const acc = dlEl('div', 'acc');
-  acc.append(dlBoton('Cancelar y borrar', 'peligro', () => dlDecidir(it.id, false)),
-             dlBoton('Permitir', 'tonal', () => dlDecidir(it.id, true)));
-  t.append(acc);
-  if (n > 1) {
-    const pie = dlEl('div', 'pie');
-    pie.append(dlEl('span', '', '+' + (n - 1) + (n - 1 === 1 ? ' más' : ' más')),
-      dlBoton('Ver todas', 'enlace', () => { dlExpandido = true; dlRender(false); }));
-    t.append(pie);
-  }
-  mazo.append(t);
-  zona.append(mazo);
+function sxQuitarGlobo(kind) {
+  const it = sxGlobos.get(kind);
+  if (!it) return;
+  sxGlobos.delete(kind);
+  clearTimeout(it.timer);
+  it.el.classList.add('fuera');
+  setTimeout(() => it.el.remove(), 260);
 }
 
 function dlMostrar(id, nombre, detalle, origen) {

@@ -607,7 +607,7 @@ function alCompletar(dlId) {
       }
     };
     if (!it || !it.filename) { terminar(false); return; }
-    guardia({ cmd: 'desordenar', id: r.gid, path: it.filename, nombre: r.nombre }, (m) => terminar(!!(m && m.ok)));
+    guardia({ cmd: 'desordenar', id: r.gid, path: it.filename, nombre: r.nombre, origen: r.origen || '' }, (m) => terminar(!!(m && m.ok)));
   });
 }
 
@@ -690,7 +690,8 @@ function hidratar(cb) {
     if (m && m.ok) {
       for (const p of m.pendientes || []) {
         if (!p.desordenado || retenidas.has(p.id)) continue;
-        retenidas.set(p.id, { gid: p.id, dlId: null, nombre: p.nombre || 'archivo', detalle: 'Bloqueada anteriormente',
+        retenidas.set(p.id, { gid: p.id, dlId: null, nombre: p.nombre || 'archivo', origen: p.origen || '',
+          detalle: p.origen ? 'Desde: ' + p.origen.replace(/^https?:\/\//, '') + ' · bloqueada antes' : 'Bloqueada anteriormente',
           cuerpo: '', tabs: new Set(), notifId: null, timer: null, estado: 'desordenado', pendiente: null });
       }
       mantenerVivo();
