@@ -296,3 +296,22 @@ Sin servidores externos, sin `eval`, sin `web_accessible_resources`, sin
 `webNavigation` y sin registro del historial. El permiso de descargas sólo se usa
 para pausar, reanudar o cancelar; el de notificaciones, para preguntártelo. Los
 contadores son locales.
+
+## Guardián de descargas con auxiliar (opcional, Windows)
+
+Si una página descarga algo que no pediste, ShieldX lo bloquea y te pregunta
+dentro de la propia página (Permitir / Cancelar y borrar; agrupa varias).
+Con el auxiliar `guard/` instalado, además el archivo **nunca existe legible en
+disco** mientras decides:
+
+- `guard/vfs.py` monta `Descargas\ShieldX-temp` como carpeta virtual con
+  [WinFsp](https://github.com/winfsp/winfsp) + `winfspy` (Python 3.11). Chrome
+  descarga ahí y cada trozo se guarda ya desordenado.
+- Al terminar, `guard/host.py` lo lleva a una cuarentena fuera de Descargas.
+  Permitir lo restaura con su nombre real; Cancelar y borrar lo elimina.
+- La extensión habla con el auxiliar por *native messaging* (`com.shieldx.guard`,
+  registrado en `HKCU\Software\Google\Chrome\NativeMessagingHosts`).
+- Pruebas: `python guard/tests/test_host.py` y `python guard/tests/test_vfs.py`.
+
+Sin el auxiliar, la extensión sigue bloqueando y preguntando, pero no puede
+desordenar el archivo.

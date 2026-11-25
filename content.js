@@ -150,6 +150,8 @@ function noteGesture() {
 for (const type of ['pointerdown', 'keydown']) {
   window.addEventListener(type, (e) => {
     if (!e.isTrusted) return;
+    // Un clic en el recuadro de ShieldX decide sobre una descarga: no autoriza otras.
+    if (typeof dlHost !== 'undefined' && dlHost && e.target === dlHost) return;
     lastUserGesture = Date.now();
     // composedPath()[0] atraviesa el shadow DOM; e.target se queda en el host.
     const objetivo = (typeof e.composedPath === 'function' && e.composedPath()[0]) || e.target;
@@ -1253,11 +1255,248 @@ function startPick() {
   document.addEventListener('keydown', onKey, true);
 }
 
+
+// ── Aviso de descarga retenida, dentro de la página ──────────────────────────
+// El service worker retiene una descarga que el usuario no pidió y pide aquí la
+// decisión. Todo vive en un shadow root cerrado (la página no puede leerlo ni
+// pulsar sus botones) y solo cuentan los clics reales (isTrusted).
+// Una descarga: una tarjeta. Varias: un mazo (tarjeta delantera + capas detrás)
+// que se despliega en una lista compacta con "Cancelar todas".
+const dlCola = [];             // { id, nombre, detalle } por orden de llegada
+let dlHost = null, dlRaiz = null, dlExpandido = false;
+
+const DL_CSS = `
+  :host{all:initial}
+  *{box-sizing:border-box}
+  .zona{position:fixed;top:18px;right:18px;width:352px;max-width:calc(100vw - 24px);
+    font:13px/1.38 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;color:var(--tx);
+    --tx:#2a1415;--tx2:rgba(60,28,30,.66);--sep:rgba(120,30,30,.14);
+    --vidrio:rgba(255,246,245,.74);--borde:rgba(255,69,58,.28);--sombra:0 18px 50px rgba(120,20,20,.28),0 2px 8px rgba(0,0,0,.12);
+    --tonal:rgba(60,28,30,.08);--tonalH:rgba(60,28,30,.14);}
+  @media (prefers-color-scheme:dark){.zona{
+    --tx:#fdeeee;--tx2:rgba(255,226,224,.64);--sep:rgba(255,120,110,.16);
+    --vidrio:rgba(46,22,24,.70);--borde:rgba(255,99,88,.34);--sombra:0 20px 56px rgba(0,0,0,.6),0 2px 8px rgba(0,0,0,.4);
+    --tonal:rgba(255,255,255,.10);--tonalH:rgba(255,255,255,.17);}}
+  .mazo{position:relative}
+  .capa,.tarjeta,.lista{border-radius:20px;border:1px solid var(--borde);
+    background:var(--vidrio);-webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);
+    box-shadow:var(--sombra)}
+  .capa{position:absolute;left:0;right:0;top:0;height:100%;pointer-events:none;transition:transform .3s cubic-bezier(.2,.8,.2,1),opacity .3s}
+  .capa.c1{transform:translateY(9px) scale(.955);opacity:.78}
+  .capa.c2{transform:translateY(18px) scale(.91);opacity:.5}
+  .tarjeta{position:relative;padding:15px 16px 14px;animation:entra .42s cubic-bezier(.2,.9,.25,1.05) both}
+  .tarjeta.sale{animation:sale .22s ease-in both}
+  @keyframes entra{from{opacity:0;transform:translateX(26px) scale(.96)}to{opacity:1;transform:none}}
+  @keyframes sale{to{opacity:0;transform:translateX(18px) scale(.97)}}
+  .cab{display:flex;gap:12px;align-items:flex-start}
+  .ico{flex:none;width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+    background:linear-gradient(180deg,#ff6a5f,#ff3b30);box-shadow:0 3px 10px rgba(255,59,48,.45),inset 0 1px 0 rgba(255,255,255,.35)}
+  .ico svg{width:21px;height:21px}
+  .txt{min-width:0;flex:1}
+  .tit{margin:1px 0 0;font-weight:700;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#ff453a}
+  .nom{margin-top:3px;font-weight:700;font-size:16px;line-height:1.25;letter-spacing:-.01em;overflow-wrap:anywhere}
+  .det{margin-top:1px;color:var(--tx2);font-size:12px;white-space:pre-line;overflow-wrap:anywhere}
+  .acc{display:flex;gap:8px;margin-top:13px}
+  button{all:unset;box-sizing:border-box;cursor:pointer;text-align:center;font-weight:600;font-size:13px;
+    border-radius:11px;padding:8px 12px;transition:background .15s,transform .1s,filter .15s}
+  button:focus-visible{outline:2px solid #ff453a;outline-offset:2px}
+  button:active{transform:scale(.97)}
+  .acc button{flex:1}
+  .peligro{background:#ff3b30;color:#fff}.peligro:hover{filter:brightness(1.08)}
+  .tonal{background:var(--tonal);color:var(--tx)}.tonal:hover{background:var(--tonalH)}
+  .pie{display:flex;justify-content:space-between;align-items:center;margin-top:11px;padding-top:9px;border-top:1px solid var(--sep);color:var(--tx2);font-size:12px}
+  .enlace{color:#ff453a;font-weight:600;padding:2px 4px;margin:-2px -4px;border-radius:6px}
+  .enlace:hover{text-decoration:underline}
+  .lista{padding:6px 6px 8px;animation:entra .3s cubic-bezier(.2,.9,.25,1.05) both}
+  .lcab{display:flex;align-items:center;justify-content:space-between;padding:8px 10px 8px 12px}
+  .lcab b{font-weight:650;font-size:13.5px}
+  .filas{max-height:min(46vh,320px);overflow:auto;scrollbar-width:thin}
+  .fila{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:12px}
+  .fila+.fila{border-top:1px solid var(--sep);border-radius:0}
+  .fila .txt{flex:1}.fila .nom{font-size:14px;font-weight:700;margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fila .det{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mini{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:15px;padding:0}
+  .mini.si{background:var(--tonal);color:var(--tx)}.mini.si:hover{background:var(--tonalH)}
+  .mini.no{background:#ff3b30;color:#fff}.mini.no:hover{filter:brightness(1.08)}
+  .lpie{display:flex;justify-content:space-between;padding:8px 12px 2px}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+`;
+
+const DL_ICONO = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+  + '<path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.2 7.5 9.5 4.4-1.3 7.5-4.9 7.5-9.5V6L12 3Z" fill="rgba(255,255,255,.16)"/>'
+  + '<path d="M12 8.2v4.4"/><path d="M12 15.9v.1"/></svg>';
+
+function dlEl(tag, cls, texto) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+
+function dlBoton(txt, cls, onClick) {
+  const b = dlEl('button', cls, txt);
+  b.addEventListener('click', (e) => { if (e.isTrusted) onClick(); });   // un clic fabricado por la página no vale
+  return b;
+}
+
+function dlDecidir(id, permitir) {
+  chrome.runtime.sendMessage({ type: 'DL_DECISION', id, permitir }, () => void chrome.runtime.lastError);
+  dlCerrar(id);
+}
+
+function dlCancelarTodas() {
+  for (const it of dlCola.slice()) dlDecidir(it.id, false);
+}
+
+function dlAsegurarZona() {
+  if (dlHost && dlHost.isConnected) return;
+  dlHost = document.createElement('div');
+  dlHost.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483647;';
+  dlRaiz = dlHost.attachShadow({ mode: 'closed' });
+  const css = document.createElement('style');
+  css.textContent = DL_CSS;
+  dlRaiz.append(css);
+  (document.documentElement || document.body).appendChild(dlHost);
+}
+
+function dlTarjetaCabecera(it, titulo) {
+  const cab = dlEl('div', 'cab');
+  const ico = dlEl('div', 'ico'); ico.innerHTML = DL_ICONO;   // constante propia, sin datos de la página
+  const txt = dlEl('div', 'txt');
+  txt.append(dlEl('div', 'tit', titulo), dlEl('div', 'nom', it.nombre), dlEl('div', 'det', it.detalle));
+  cab.append(ico, txt);
+  return cab;
+}
+
+function dlRender(animar) {
+  if (!dlCola.length) { if (dlHost) { dlHost.remove(); dlHost = null; dlRaiz = null; } dlExpandido = false; return; }
+  dlAsegurarZona();
+  for (const viejo of dlRaiz.querySelectorAll('.zona')) viejo.remove();
+  const zona = dlEl('div', 'zona');
+  dlRaiz.append(zona);
+  const n = dlCola.length;
+
+  if (n > 1 && dlExpandido) {
+    const lista = dlEl('div', 'lista');
+    if (!animar) lista.style.animation = 'none';
+    const lcab = dlEl('div', 'lcab');
+    lcab.append(dlEl('b', '', n + ' descargas bloqueadas'),
+      dlBoton('Contraer', 'enlace', () => { dlExpandido = false; dlRender(false); }));
+    const filas = dlEl('div', 'filas');
+    for (const it of dlCola) {
+      const f = dlEl('div', 'fila');
+      const txt = dlEl('div', 'txt');
+      const nomFila = dlEl('div', 'nom', it.nombre); nomFila.title = it.nombre;   // nombre completo al pasar el ratón
+      txt.append(nomFila, dlEl('div', 'det', it.detalle.replace(/\n/g, ' · ')));
+      const si = dlBoton('✓', 'mini si', () => dlDecidir(it.id, true)); si.title = 'Permitir';
+      const no = dlBoton('✕', 'mini no', () => dlDecidir(it.id, false)); no.title = 'Cancelar y borrar';
+      f.append(txt, si, no);
+      filas.append(f);
+    }
+    const lpie = dlEl('div', 'lpie');
+    lpie.append(dlEl('span', 'det', 'Ninguna se guarda hasta que decidas'),
+      dlBoton('Cancelar todas', 'enlace', dlCancelarTodas));
+    lista.append(lcab, filas, lpie);
+    zona.append(lista);
+    return;
+  }
+
+  const it = dlCola[0];
+  const mazo = dlEl('div', 'mazo');
+  if (n > 2) mazo.append(dlEl('div', 'capa c2'));
+  if (n > 1) mazo.append(dlEl('div', 'capa c1'));
+  const t = dlEl('div', 'tarjeta');
+  if (!animar) t.style.animation = 'none';
+  t.setAttribute('role', 'alert');
+  t.append(dlTarjetaCabecera(it, n > 1 ? 'Descarga bloqueada · 1 de ' + n : 'Descarga bloqueada'));
+  const acc = dlEl('div', 'acc');
+  acc.append(dlBoton('Cancelar y borrar', 'peligro', () => dlDecidir(it.id, false)),
+             dlBoton('Permitir', 'tonal', () => dlDecidir(it.id, true)));
+  t.append(acc);
+  if (n > 1) {
+    const pie = dlEl('div', 'pie');
+    pie.append(dlEl('span', '', '1 de ' + n),
+      dlBoton('Ver las ' + n, 'enlace', () => { dlExpandido = true; dlRender(false); }));
+    t.append(pie);
+  }
+  mazo.append(t);
+  zona.append(mazo);
+}
+
+function dlMostrar(id, nombre, detalle) {
+  if (!IS_TOP_FRAME) return;
+  if (dlCola.some(x => x.id === id)) return;
+  dlCola.push({ id, nombre, detalle });
+  dlRender(dlCola.length === 1);   // la animación de entrada solo para la primera
+}
+
+function dlCerrar(id) {
+  const i = dlCola.findIndex(x => x.id === id);
+  if (i < 0) return;
+  dlCola.splice(i, 1);
+  if (dlCola.length < 2) dlExpandido = false;
+  dlRender(false);
+}
+
+
+// Aviso corto y discreto (un mensaje de resultado), con el mismo cristal que el recuadro.
+function dlToast(texto) {
+  const host = document.createElement('div');
+  host.style.cssText = 'all:initial;position:fixed;right:18px;bottom:18px;z-index:2147483647;';
+  const raiz = host.attachShadow({ mode: 'closed' });
+  const css = document.createElement('style');
+  css.textContent = `
+    .t{max-width:340px;padding:11px 16px;border-radius:14px;font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+      color:#2a1415;background:rgba(255,246,245,.82);border:1px solid rgba(255,69,58,.28);
+      -webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);
+      box-shadow:0 14px 40px rgba(120,20,20,.25);animation:e .35s cubic-bezier(.2,.9,.25,1.05) both}
+    @media (prefers-color-scheme:dark){.t{color:#fdeeee;background:rgba(46,22,24,.78);border-color:rgba(255,99,88,.34)}}
+    @keyframes e{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+    @media (prefers-reduced-motion:reduce){.t{animation:none}}`;
+  const t = document.createElement('div'); t.className = 't'; t.textContent = texto;
+  raiz.append(css, t);
+  (document.documentElement || document.body).appendChild(host);
+  setTimeout(() => { t.style.transition = 'opacity .3s'; t.style.opacity = '0'; setTimeout(() => host.remove(), 320); }, 6000);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!sender || sender.id !== chrome.runtime.id) return;
   if (typeof msg !== 'object' || msg === null) return;
   if (msg.type === 'PICK_START') startPick();
+  if (msg.type === 'DL_PROMPT' && IS_TOP_FRAME) {
+    dlMostrar(msg.id, String(msg.nombre || ''), String(msg.detalle || ''));
+    sendResponse({ ok: true });
+  }
+  if (msg.type === 'DL_CLOSE') dlCerrar(msg.id);
+  if (msg.type === 'DL_TOAST' && IS_TOP_FRAME) {
+    dlToast(String(msg.texto || ''));
+    sendResponse({ ok: true });
+  }
+  if (msg.type === 'DL_REPLAY' && IS_TOP_FRAME) {
+    // El usuario pulsó Permitir: se repite la descarga del blob desde la propia página.
+    // fetch comprueba antes que el blob sigue vivo (si la página lo revocó, falla).
+    fetch(msg.url).then((r) => r.blob()).then(() => {
+      const a = document.createElement('a');
+      a.href = msg.url; a.download = String(msg.nombre || 'descarga'); a.style.display = 'none';
+      (document.documentElement || document.body).appendChild(a);
+      a.click(); a.remove();
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;   // respuesta asíncrona
+  }
   if (msg.type === 'COOKIE_SHOW' && IS_TOP_FRAME) {
     sendResponse({ restaurados: restoreCookieUI() });
   }
 });
+
+// Al cargar la página: si hay descargas bloqueadas pendientes (también las que
+// sobrevivieron a cerrar Chrome o reiniciar la extensión), se muestran aquí.
+if (IS_TOP_FRAME && /^(https?|file):/i.test(location.protocol)) {
+  try {
+    chrome.runtime.sendMessage({ type: 'DL_LIST' }, (res) => {
+      void chrome.runtime.lastError;
+      for (const p of (res && res.lista) || []) dlMostrar(p.id, String(p.nombre || ''), String(p.detalle || ''));
+    });
+  } catch (_) {}
+}

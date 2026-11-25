@@ -200,6 +200,24 @@
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
 
+
+    /* ── Descargas pendientes de confirmar ── */
+    .pend-section { padding:12px 20px 14px; border-top:1px solid rgba(255,59,92,.35);
+      background:linear-gradient(180deg,rgba(255,59,92,.09),rgba(255,59,92,.02)); }
+    .pend-section .sec-title { color:var(--red); display:flex; align-items:center; gap:6px; }
+    .pend-list { display:flex; flex-direction:column; gap:6px; }
+    .pend-item { display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px;
+      border:1px solid rgba(255,59,92,.25); background:var(--bg2); }
+    .pend-txt { flex:1; min-width:0; }
+    .pend-nom { font-size:11px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pend-det { font-size:9px; color:var(--tdim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .pend-btn { font-family:var(--mono); font-size:9px; font-weight:700; letter-spacing:.06em; cursor:pointer;
+      border-radius:6px; padding:5px 8px; border:1px solid var(--bdr); background:none; color:var(--tmid); transition:all .2s; }
+    .pend-btn.si:hover { color:var(--green); border-color:var(--green); }
+    .pend-btn.no { color:#fff; background:var(--red); border-color:var(--red); }
+    .pend-btn.no:hover { filter:brightness(1.1); }
+    .pend-todas { margin-top:8px; text-align:right; }
+
     /* ── Footer ── */
     .footer {
       padding:9px 20px; border-top:1px solid var(--bdr);
@@ -250,6 +268,16 @@
         <div class="tgl-track"><div class="tgl-thumb"></div></div>
       </label>
       <div class="tgl-hint">ON/OFF</div>
+    </div>
+  </div>
+
+
+  <!-- Descargas bloqueadas pendientes de confirmar -->
+  <div class="pend-section" id="pendBox" style="display:none">
+    <div class="sec-title">Descargas pendientes <span id="pendCount"></span></div>
+    <div class="pend-list" id="pendList"></div>
+    <div class="pend-todas" id="pendTodas" style="display:none">
+      <button class="reset-btn" id="pendCancelAll">CANCELAR TODAS</button>
     </div>
   </div>
 
