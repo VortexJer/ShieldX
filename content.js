@@ -1319,7 +1319,9 @@ const DL_CSS = `
   .mini{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-size:15px;padding:0}
   .mini.si{background:var(--tonal);color:var(--tx)}.mini.si:hover{background:var(--tonalH)}
   .mini.no{background:#ff3b30;color:#fff}.mini.no:hover{filter:brightness(1.08)}
-  .lpie{display:flex;justify-content:space-between;padding:8px 12px 2px}
+  .lpie{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px 2px}
+  .todas{display:flex;gap:14px;flex:none}
+  .enlace.suave{color:var(--tx);opacity:.8}.enlace.suave:hover{opacity:1}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
@@ -1340,6 +1342,12 @@ function dlBoton(txt, cls, onClick) {
   return b;
 }
 
+function dlOrdenadas() {
+  const aqui = location.origin;
+  return dlCola.slice().sort((a, b) =>
+    ((a.origen === aqui ? 0 : 1) - (b.origen === aqui ? 0 : 1)) || (b.t - a.t));
+}
+
 function dlDecidir(id, permitir) {
   chrome.runtime.sendMessage({ type: 'DL_DECISION', id, permitir }, () => void chrome.runtime.lastError);
   dlCerrar(id);
@@ -1347,6 +1355,10 @@ function dlDecidir(id, permitir) {
 
 function dlCancelarTodas() {
   for (const it of dlCola.slice()) dlDecidir(it.id, false);
+}
+
+function dlPermitirTodas() {
+  for (const it of dlCola.slice()) dlDecidir(it.id, true);
 }
 
 function dlAsegurarZona() {
@@ -1384,7 +1396,7 @@ function dlRender(animar) {
     lcab.append(dlEl('b', '', n + ' descargas bloqueadas'),
       dlBoton('Contraer', 'enlace', () => { dlExpandido = false; dlRender(false); }));
     const filas = dlEl('div', 'filas');
-    for (const it of dlCola) {
+    for (const it of dlOrdenadas()) {
       const f = dlEl('div', 'fila');
       const txt = dlEl('div', 'txt');
       const nomFila = dlEl('div', 'nom', it.nombre); nomFila.title = it.nombre;   // nombre completo al pasar el ratón
@@ -1395,14 +1407,15 @@ function dlRender(animar) {
       filas.append(f);
     }
     const lpie = dlEl('div', 'lpie');
-    lpie.append(dlEl('span', 'det', 'Ninguna se guarda hasta que decidas'),
-      dlBoton('Cancelar todas', 'enlace', dlCancelarTodas));
+    const acciones = dlEl('span', 'todas');
+    acciones.append(dlBoton('Permitir todas', 'enlace suave', dlPermitirTodas), dlBoton('Cancelar todas', 'enlace', dlCancelarTodas));
+    lpie.append(dlEl('span', 'det', 'Ninguna se guarda hasta que decidas'), acciones);
     lista.append(lcab, filas, lpie);
     zona.append(lista);
     return;
   }
 
-  const it = dlCola[0];
+  const it = dlOrdenadas()[0];
   const mazo = dlEl('div', 'mazo');
   if (n > 2) mazo.append(dlEl('div', 'capa c2'));
   if (n > 1) mazo.append(dlEl('div', 'capa c1'));
@@ -1416,19 +1429,19 @@ function dlRender(animar) {
   t.append(acc);
   if (n > 1) {
     const pie = dlEl('div', 'pie');
-    pie.append(dlEl('span', '', '1 de ' + n),
-      dlBoton('Ver las ' + n, 'enlace', () => { dlExpandido = true; dlRender(false); }));
+    pie.append(dlEl('span', '', '+' + (n - 1) + (n - 1 === 1 ? ' más' : ' más')),
+      dlBoton('Ver todas', 'enlace', () => { dlExpandido = true; dlRender(false); }));
     t.append(pie);
   }
   mazo.append(t);
   zona.append(mazo);
 }
 
-function dlMostrar(id, nombre, detalle) {
+function dlMostrar(id, nombre, detalle, origen) {
   if (!IS_TOP_FRAME) return;
   if (dlCola.some(x => x.id === id)) return;
-  dlCola.push({ id, nombre, detalle });
-  dlRender(dlCola.length === 1);   // la animación de entrada solo para la primera
+  dlCola.push({ id, nombre, detalle, origen: String(origen || ''), t: Date.now() });
+  dlRender(dlCola.length === 1 || !dlExpandido);   // la animación de entrada solo para la primera
 }
 
 function dlCerrar(id) {
@@ -1465,7 +1478,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (typeof msg !== 'object' || msg === null) return;
   if (msg.type === 'PICK_START') startPick();
   if (msg.type === 'DL_PROMPT' && IS_TOP_FRAME) {
-    dlMostrar(msg.id, String(msg.nombre || ''), String(msg.detalle || ''));
+    dlMostrar(msg.id, String(msg.nombre || ''), String(msg.detalle || ''), msg.origen);
     sendResponse({ ok: true });
   }
   if (msg.type === 'DL_CLOSE') dlCerrar(msg.id);
@@ -1496,7 +1509,7 @@ if (IS_TOP_FRAME && /^(https?|file):/i.test(location.protocol)) {
   try {
     chrome.runtime.sendMessage({ type: 'DL_LIST' }, (res) => {
       void chrome.runtime.lastError;
-      for (const p of (res && res.lista) || []) dlMostrar(p.id, String(p.nombre || ''), String(p.detalle || ''));
+      for (const p of (res && res.lista) || []) dlMostrar(p.id, String(p.nombre || ''), String(p.detalle || ''), p.origen);
     });
   } catch (_) {}
 }
