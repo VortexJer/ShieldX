@@ -121,6 +121,12 @@
 
   function report(kind, url) {
     try {
+      // El detail de un CustomEvent no cruza del mundo de la página al de la
+      // extensión: se deja también en un atributo para que el aviso sepa qué fue.
+      document.documentElement.setAttribute('data-sx-bloqueo',
+        JSON.stringify({ kind, url: String(url || '').slice(0, 300), t: Date.now() }));
+    } catch (_) {}
+    try {
       window.dispatchEvent(new CustomEvent('__shieldx_guard_block', {
         detail: { kind, url: String(url || '').slice(0, 300) }
       }));

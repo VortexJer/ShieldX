@@ -435,26 +435,30 @@ function pintarPendientes(lista) {
   pendList.textContent = '';
   if (!lista.length) { pendBox.style.display = 'none'; return; }
   pendBox.style.display = '';
-  pendCount.textContent = '(' + lista.length + ')';
+  pendCount.textContent = String(lista.length);
   pendTodas.style.display = lista.length > 1 ? '' : 'none';
   for (const p of lista) {
     const fila = document.createElement('div'); fila.className = 'pend-item';
+    const ext = (String(p.nombre).match(/\.([a-z0-9]{1,4})$/i) || [, ''])[1].toUpperCase();
+    const ico = document.createElement('div'); ico.className = 'pend-file'; ico.textContent = ext || 'FILE';
     const txt = document.createElement('div'); txt.className = 'pend-txt';
     const nom = document.createElement('div'); nom.className = 'pend-nom'; nom.textContent = p.nombre; nom.title = p.nombre;
     const det = document.createElement('div'); det.className = 'pend-det';
     det.textContent = (p.estado === 'bajando' ? 'Bajando… · ' : '') + (p.detalle || '').replace(/\n/g, ' · ');
     txt.append(nom, det);
-    const si = document.createElement('button'); si.className = 'pend-btn si'; si.textContent = 'PERMITIR';
+    const acc = document.createElement('div'); acc.className = 'pend-acc';
+    const si = document.createElement('button'); si.className = 'pend-btn si'; si.textContent = 'Permitir';
     si.addEventListener('click', () => decidirPendiente(p.id, true));
-    const no = document.createElement('button'); no.className = 'pend-btn no'; no.textContent = 'BORRAR';
+    const no = document.createElement('button'); no.className = 'pend-btn no'; no.textContent = 'Borrar';
     no.addEventListener('click', () => decidirPendiente(p.id, false));
-    fila.append(txt, si, no);
+    acc.append(si, no);
+    fila.append(ico, txt, acc);
     pendList.appendChild(fila);
   }
 }
 
-pendCancelAll.addEventListener('click', () => {
-  for (const p of pendActual.slice()) chrome.runtime.sendMessage({ type: 'DL_DECISION', id: p.id, permitir: false }, () => void chrome.runtime.lastError);
+el('pendAllowAll').addEventListener('click', () => {
+  for (const p of pendActual.slice()) chrome.runtime.sendMessage({ type: 'DL_DECISION', id: p.id, permitir: true }, () => void chrome.runtime.lastError);
   pendActual = [];
   pintarPendientes(pendActual);
 });
