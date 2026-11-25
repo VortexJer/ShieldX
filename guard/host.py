@@ -312,7 +312,7 @@ def desordenar(m):
         clave, tam = r
         db = cargar()
         db[id_] = {'path': destino, 'clave': clave.hex(), 'desordenado': True, 'modo': 'completo',
-                   'nombre': m.get('nombre', ''), 't': time.time(), 'tam': tam,
+                   'nombre': m.get('nombre', ''), 'origen': m.get('origen', ''), 't': time.time(), 'tam': tam,
                    'destino': os.path.dirname(os.path.dirname(ruta))}
         guardar(db)
         return {'ok': True, 'virtual': True, 'path': destino, 'tam': tam,
@@ -459,7 +459,7 @@ def borrar(m):
 
 def listar(_m):
     return {'ok': True, 'pendientes': [
-        {'id': k, 'nombre': v.get('nombre'), 'path': v.get('path'), 'desordenado': v.get('desordenado')}
+        {'id': k, 'nombre': v.get('nombre'), 'origen': v.get('origen', ''), 'path': v.get('path'), 'desordenado': v.get('desordenado')}
         for k, v in cargar().items() if not k.startswith('vuelo:')]}
 
 
