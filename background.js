@@ -12,7 +12,8 @@
 
 const VALID_MSG_TYPES = new Set([
   'BLOCKED', 'COOKIE_BLOCKED', 'GET_STATS', 'SET_SITE', 'RESET_STATS',
-  'GESTURE', 'GUARD_BLOCKED', 'SYNC_RULES', 'DL_DECISION', 'DL_LIST'
+  'GESTURE', 'GUARD_BLOCKED', 'SYNC_RULES', 'DL_DECISION', 'DL_LIST',
+  'TABUNDER_ALLOW'
 ]);
 
 const DEFAULTS = {
@@ -281,6 +282,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // El popup acaba de importar ajustes: hay que levantar las reglas de red.
   if (msg.type === 'SYNC_RULES') { syncSiteRules(); return; }
+
+  // "Ir igualmente" en el globito de pestaña rezagada: el usuario la deja pasar.
+  if (msg.type === 'TABUNDER_ALLOW') {
+    if (tabId !== undefined && /^https?:/i.test(String(msg.url || ''))) {
+      tabunderPermitidas.set(tabId, String(msg.url));
+      chrome.tabs.update(tabId, { url: String(msg.url) }, () => void chrome.runtime.lastError);
+    }
+    return;
+  }
 
   if (msg.type === 'GET_STATS') {
     const wanted = typeof msg.tabId === 'number' ? msg.tabId : null;
@@ -862,4 +872,91 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   pageCounts.delete(tabId);
+});
+
+// ── Pestaña rezagada (tab-under / tabnabbing) ────────────────────────────────
+// El truco: pulsas algo, la web abre lo que pediste en una pestaña NUEVA y, en
+// la pestaña que se queda atrás, cambia la página por otra (anuncio, estafa,
+// "tu PC tiene virus"). Cuando vuelves, crees que es la web en la que estabas.
+// location no se puede parchear desde script, así que se vigila desde aquí:
+// si una pestaña acaba de abrir otra y, sin que el usuario vuelva a tocarla,
+// se va a OTRO sitio, se le devuelve la página que tenía y se avisa.
+const TABUNDER_WINDOW = 10000;            // ms tras abrir la pestaña nueva
+const aperturas = new Map();              // tabId origen -> { t, url, nueva }
+const navsRecientes = new Map();          // tabId -> { t, url } último onBeforeNavigate
+const tabunderAvisos = new Map();         // tabId -> url bloqueada (globito al recargar)
+const tabunderPermitidas = new Map();     // tabId -> url que el usuario dejó pasar
+
+function sitioBase(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+      .split('.').slice(-2).join('.');
+  } catch (_) { return ''; }
+}
+
+function esWeb(url) { return /^https?:/i.test(String(url || '')); }
+
+function comprobarTabunder(tabId, destino) {
+  const ap = aperturas.get(tabId);
+  if (!ap || Date.now() - ap.t > TABUNDER_WINDOW) return;
+  if (!esWeb(destino) || !esWeb(ap.url)) return;
+  if (sitioBase(destino) === sitioBase(ap.url)) return;          // navegación interna
+  if ((lastGesture.get(tabId) || 0) > ap.t + 300) return;        // la has vuelto a tocar tú
+  if (tabunderPermitidas.get(tabId) === destino) { tabunderPermitidas.delete(tabId); return; }
+  chrome.storage.local.get(['enabled', 'guardEnabled', 'siteExcluded'], (data) => {
+    if (data.enabled === false || data.guardEnabled === false) return;
+    const host = hostFromUrl(ap.url);
+    if (host && Array.isArray(data.siteExcluded) && data.siteExcluded.includes(host)) return;
+    aperturas.delete(tabId);
+    navsRecientes.delete(tabId);
+    tabunderAvisos.set(tabId, destino);
+    // Lanzar otra navegación a la página que tenía cancela la que estaba en curso.
+    chrome.tabs.update(tabId, { url: ap.url }, () => void chrome.runtime.lastError);
+    addToTotal(1);
+    chrome.storage.local.get(['redirectsBlocked'], (d) => {
+      chrome.storage.local.set({ redirectsBlocked: (d.redirectsBlocked || 0) + 1 });
+    });
+  });
+}
+
+if (chrome.webNavigation) {
+  chrome.webNavigation.onCreatedNavigationTarget.addListener((d) => {
+    // La pestaña de origen está en d.sourceTabId; su URL actual es la "buena".
+    chrome.tabs.get(d.sourceTabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) return;
+      aperturas.set(d.sourceTabId, { t: Date.now(), url: tab.url, nueva: d.tabId });
+      // Orden inverso: la web cambió la pestaña de origen justo ANTES de abrir la nueva.
+      const nav = navsRecientes.get(d.sourceTabId);
+      if (nav && Date.now() - nav.t < 1500) {
+        aperturas.get(d.sourceTabId).t = Math.min(nav.t, Date.now());
+        comprobarTabunder(d.sourceTabId, nav.url);
+      }
+    });
+  });
+
+  chrome.webNavigation.onBeforeNavigate.addListener((d) => {
+    if (d.frameId !== 0) return;
+    navsRecientes.set(d.tabId, { t: Date.now(), url: d.url });
+    comprobarTabunder(d.tabId, d.url);
+  });
+
+  // Una navegación ya hecha deja de ser "en curso" para el caso de orden inverso.
+  chrome.webNavigation.onCommitted.addListener((d) => {
+    if (d.frameId === 0) navsRecientes.delete(d.tabId);
+  });
+
+  chrome.webNavigation.onCompleted.addListener((d) => {
+    if (d.frameId !== 0 || !tabunderAvisos.has(d.tabId)) return;
+    const url = tabunderAvisos.get(d.tabId);
+    tabunderAvisos.delete(d.tabId);
+    chrome.tabs.sendMessage(d.tabId, { type: 'SX_GLOBO', kind: 'tabunder', url },
+      { frameId: 0 }, () => void chrome.runtime.lastError);
+    pageCounts.set(d.tabId, (pageCounts.get(d.tabId) || 0) + 1);
+    paintBadge(d.tabId);
+  });
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  aperturas.delete(tabId); navsRecientes.delete(tabId);
+  tabunderAvisos.delete(tabId); tabunderPermitidas.delete(tabId);
 });

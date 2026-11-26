@@ -1648,6 +1648,7 @@ const SX_TEXTOS = {
   popup: 'Ventana emergente bloqueada',
   anchor: 'Redirección bloqueada',
   form: 'Envío a otra pestaña bloqueado',
+  tabunder: 'Esta pestaña iba a cambiar de web',
 };
 const GLOBO_CSS = `
   .gzona{position:fixed;top:14px;left:50%;right:auto;width:auto;max-width:none;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;
@@ -1663,6 +1664,9 @@ const GLOBO_CSS = `
   .gtit{font-weight:700;font-size:13.5px;white-space:nowrap}
   .gsub{font-size:12px;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .gnum{font-weight:700;font-size:12px;color:var(--rojo);margin-left:2px}
+  .gir{flex:none;white-space:nowrap;height:28px;padding:0 12px;border-radius:999px;font-size:12.5px;font-weight:600;
+    background:var(--capsula);color:var(--tx);box-shadow:inset 0 0 0 1px rgba(255,255,255,.35)}
+  .gir:hover{background:var(--tonalH)}
   .gcerrar{width:28px;height:28px;min-height:28px;padding:0;border-radius:50%;font-size:14px;flex:none}
   .oscuro .gtit{text-shadow:0 1px 2px rgba(0,0,0,.45)}
 `;
@@ -1704,10 +1708,33 @@ function sxGlobo(kind, url) {
   txt.append(tit, sub);
   const cerrar = dlBoton('✕', 'mini si gcerrar', () => sxQuitarGlobo(kind));
   cerrar.title = 'Cerrar';
-  el.append(ico, txt, cerrar);
+  // Pestaña rezagada: la web cambió esta pestaña por otra mientras abría una
+  // nueva. Se devolvió a donde estabas; si de verdad querías ir, un botón.
+  let ir = null;
+  if (kind === 'tabunder' && /^https?:/i.test(String(url || ''))) {
+    ir = dlBoton('Ir igualmente', 'gir', () => {
+      sxQuitarGlobo(kind);
+      try { chrome.runtime.sendMessage({ type: 'TABUNDER_ALLOW', url: String(url) }, () => void chrome.runtime.lastError); } catch (_) {}
+    });
+    ir.title = String(url).slice(0, 200);
+  }
+  el.append(ico, txt);
+  if (ir) el.append(ir);
+  el.append(cerrar);
   sxGloboZona.append(el);
-  const item = { el, n: 1, num, sub, timer: setTimeout(() => sxQuitarGlobo(kind), 5000) };
+  const espera = kind === 'tabunder' ? 9000 : 5000;   // da tiempo a leerlo al volver
+  const item = { el, n: 1, num, sub, timer: null };
   sxGlobos.set(kind, item);
+  // En segundo plano nadie lo ve: la cuenta atrás empieza al volver a la pestaña.
+  const arrancar = () => { item.timer = setTimeout(() => sxQuitarGlobo(kind), espera); };
+  if (document.hidden) {
+    const alVolver = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', alVolver);
+      if (sxGlobos.get(kind) === item) arrancar();
+    };
+    document.addEventListener('visibilitychange', alVolver);
+  } else arrancar();
 }
 
 function sxQuitarGlobo(kind) {
@@ -1779,6 +1806,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
     }).catch(() => sendResponse({ ok: false }));
     return true;   // respuesta asíncrona
+  }
+  if (msg.type === 'SX_GLOBO' && IS_TOP_FRAME) {
+    sxGlobo(String(msg.kind || 'tabunder'), String(msg.url || ''));
   }
   if (msg.type === 'COOKIE_SHOW' && IS_TOP_FRAME) {
     sendResponse({ restaurados: restoreCookieUI() });

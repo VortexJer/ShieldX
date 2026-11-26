@@ -2,7 +2,7 @@
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA48XjWjw2LnqpTagLzcMJy7rxap6e67CyZyDyh/m5g1E9Bf+G3RIW2VLpDObEq3GrELVjdl8NML86uYF/LXoqsUwlthkd7QIh2MNTymm8p2DYD+wWZQrvYCDPQu3eC9pV8d4UvpTYe59pvfLyNJMlIzlyqXN8tjlSeXVj3A6mTi9xtscMEE0j9SFbRD0039jz6YuPy9bB44hNf7WYH3sbPSKAo8g4JCBzhuLNGCdj1RdNCIAzbME+WzFacKk15JuqtJG4bhETGqXQT7MpC3fu1ooeFbkYz0egDq/1v0DNhlZPOTlCqIWu9d8f4VL7/JF7VaRrVzkIKsx9olU6AtLueQIDAQAB",
   "manifest_version": 3,
   "name": "ShieldX – Bloqueador Total",
-  "version": "11.9.3.20",
+  "version": "11.9.3.21",
   "description": "Bloquea anuncios, rastreadores, resultados patrocinados y banners de cookies. Sin excepciones.",
   "content_security_policy": {
     "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"
@@ -16,7 +16,8 @@
     "nativeMessaging",
     "downloads.ui",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"

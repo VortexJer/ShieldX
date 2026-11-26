@@ -9,6 +9,7 @@ const suites = [
   ['smoke_cookies.js',    'banners de cookies y lo que abre el usuario'],
   ['smoke_muros.js',      'muros de "desactiva el bloqueador"'],
   ['smoke_guard.js',      'anti pop-under: que ventanas se permiten'],
+  ['smoke_tabunder.js',   'pestaña rezagada: la web cambia la pestaña que dejas atrás'],
   ['smoke_picker.js',     'picker: entrada, salidas y selectores'],
   ['smoke_selector.js',   'generador de selectores: unicidad'],
   ['smoke_buscador.js',   'resultados patrocinados y meta-refresh'],
@@ -42,5 +43,5 @@ for (const [fichero, que] of suites) {
 }
 
 console.log(`\n${totalOk} comprobaciones en ${suites.length} ficheros` +
-  (totalFallos ? ` — ${totalFallos} FALLOS en ${rotas.join(', ')}` : ' — todo correcto'));
+  (rotas.length ? ` — ${totalFallos} FALLOS, rotos: ${rotas.join(', ')}` : ' — todo correcto'));
 process.exit(totalFallos || rotas.length ? 1 : 0);

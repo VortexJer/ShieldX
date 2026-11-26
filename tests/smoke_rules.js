@@ -40,12 +40,16 @@ for (const icono of Object.values(manifest.icons || {})) {
 const PERMISOS_ESPERADOS = new Set([
   'declarativeNetRequest', 'declarativeNetRequestWithHostAccess', 'storage',
   'tabs', 'downloads', 'notifications', 'contextMenus',
+  'nativeMessaging', 'downloads.ui',   // auxiliar de cuarentena y burbuja de descargas
+  'webNavigation',                     // pestaña rezagada: ver quién abrió qué pestaña
 ]);
 const sobrantes = manifest.permissions.filter(p => !PERMISOS_ESPERADOS.has(p));
 comprobar('sin permisos de mas' + (sobrantes.length ? ' -> ' + sobrantes : ''),
   sobrantes.length === 0);
-comprobar('sin webRequest ni webNavigation (no hacen falta y ven demasiado)',
-  !manifest.permissions.some(p => /webRequest|webNavigation|history|cookies|bookmarks/.test(p)));
+// webNavigation sí hace falta desde 11.9.3.21 (onCreatedNavigationTarget es lo
+// único que dice qué pestaña abrió a cuál); webRequest sigue fuera.
+comprobar('sin webRequest, history, cookies ni bookmarks (ven demasiado)',
+  !manifest.permissions.some(p => /webRequest|history|cookies|bookmarks/.test(p)));
 comprobar('sin web_accessible_resources (nada de la extension es alcanzable desde la web)',
   manifest.web_accessible_resources === undefined);
 

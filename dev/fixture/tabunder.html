@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>Prueba pestaña rezagada</title>
+<style>body{font:18px system-ui;padding:40px}a{display:inline-block;margin:10px 0;font-size:22px}</style>
+<h1>Página original (localhost)</h1>
+<p>Inocua: simula el truco de abrir lo pedido en otra pestaña y cambiar esta.</p>
+<p><a id="trampa" href="/ok.html">1. Enlace trampa (abre pestaña nueva y cambia esta a 127.0.0.1)</a></p>
+<p><a id="interno" href="/ok.html">2. Abre pestaña nueva y esta va a otra página del MISMO sitio</a></p>
+<p><a id="normal" href="http://127.0.0.1:8099/ok.html">3. Enlace normal a otro sitio (debe ir sin problema)</a></p>
+<script>
+document.getElementById('trampa').onclick = (e) => { e.preventDefault();
+  window.open('/ok.html', '_blank');
+  setTimeout(() => { location.href = 'http://127.0.0.1:8099/ok.html?anuncio'; }, 200); };
+document.getElementById('interno').onclick = (e) => { e.preventDefault();
+  window.open('/ok.html', '_blank');
+  setTimeout(() => { location.href = '/ok.html?interno'; }, 200); };
+</script>
