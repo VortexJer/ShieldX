@@ -880,7 +880,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // "tu PC tiene virus"). Cuando vuelves, crees que es la web en la que estabas.
 // location no se puede parchear desde script, así que se vigila desde aquí:
 // si una pestaña acaba de abrir otra y, sin que el usuario vuelva a tocarla,
-// se va a OTRO sitio, se le devuelve la página que tenía y se avisa.
+// navega (a otro sitio o al mismo), se le devuelve la página que tenía y se avisa.
 const TABUNDER_WINDOW = 10000;            // ms tras abrir la pestaña nueva
 const aperturas = new Map();              // tabId origen -> { t, url, nueva }
 const navsRecientes = new Map();          // tabId -> { t, url } último onBeforeNavigate
@@ -900,7 +900,10 @@ function comprobarTabunder(tabId, destino) {
   const ap = aperturas.get(tabId);
   if (!ap || Date.now() - ap.t > TABUNDER_WINDOW) return;
   if (!esWeb(destino) || !esWeb(ap.url)) return;
-  if (sitioBase(destino) === sitioBase(ap.url)) return;          // navegación interna
+  // También dentro del mismo sitio: nadie cambia tu pestaña sin que estés.
+  // Excepción: la pestaña nueva ya se cerró sola. Es el inicio de sesión con
+  // Google o el pago con PayPal, que al terminar devuelven a la original.
+  if (ap.cerrada) return;
   if ((lastGesture.get(tabId) || 0) > ap.t + 300) return;        // la has vuelto a tocar tú
   if (tabunderPermitidas.get(tabId) === destino) { tabunderPermitidas.delete(tabId); return; }
   chrome.storage.local.get(['enabled', 'guardEnabled', 'siteExcluded'], (data) => {
@@ -957,6 +960,7 @@ if (chrome.webNavigation) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const ap of aperturas.values()) if (ap.nueva === tabId) ap.cerrada = true;
   aperturas.delete(tabId); navsRecientes.delete(tabId);
   tabunderAvisos.delete(tabId); tabunderPermitidas.delete(tabId);
 });

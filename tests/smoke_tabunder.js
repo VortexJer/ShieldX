@@ -63,11 +63,22 @@ comprobar('al recargar sale el globito con el destino bloqueado',
   aPestana.some(([id, m]) => id === 1 && m.type === 'SX_GLOBO' && m.kind === 'tabunder' && /estafa/.test(m.url)));
 comprobar('cuenta como redirección bloqueada', store.redirectsBlocked === 1);
 
-// 2. Navegación dentro del mismo sitio (OAuth que vuelve a /callback, etc.): pasa.
+// 2. Dentro del mismo sitio también se bloquea: nadie cambia tu pestaña sin ti.
 actualizadas.length = 0;
 abre(1, 3);
 navega(1, 'https://www.descargas.example/gracias');
-comprobar('navegar dentro del mismo sitio no se toca', actualizadas.length === 0);
+comprobar('cambiar la pestaña al mismo sitio sin ti tambien se bloquea',
+  actualizadas.some(([id, u]) => id === 1 && u === urls[1]));
+carga(1);
+
+// 2b. Login con ventana: la ventana se cierra sola y la original continúa.
+actualizadas.length = 0;
+abre(1, 9);
+disparar('chrome.tabs.onRemoved', 9);
+navega(1, 'https://descargas.example/sesion-iniciada');
+comprobar('si la pestaña nueva ya se cerro (login, pago) la original continua',
+  actualizadas.length === 0);
+disparar('chrome.webNavigation.onCommitted', { tabId: 1, frameId: 0 });
 
 // 3. El usuario vuelve y pulsa un enlace a otra web: es suyo, pasa.
 actualizadas.length = 0;
